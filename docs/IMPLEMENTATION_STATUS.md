@@ -1,5 +1,25 @@
 # Implementation status
 
+## Current implementation audit (2026-11-15)
+**Not production-ready.** Detailed feature-by-feature classification and exact setup: [IMPLEMENTATION_AUDIT.md](IMPLEMENTATION_AUDIT.md).
+
+- The main UI uses real FastAPI requests and durable SQLite/local files, but its mailbox, approvals, notifications, sharing and caption flows are **demo/mock only**. `/account` is a separate, incomplete Supabase Auth/Postgres slice; there is no unified production vault or working cloud certificate upload/download pipeline.
+- Current checks: **53 pytest passed**, **2 Vitest passed**, Python lint/format, frontend lint/typecheck, OpenAPI drift, build and full dependency audits passed. **8 local Playwright journeys passed + 2 new mocked-account UI journeys passed; 2 live Auth journeys skipped** because their temporary accounts were removed. Prior milestone live Auth tests remain historical evidence, not a new audit pass.
+- Current real Redis/Celery smoke and transactional local PostgreSQL RLS assertions passed. Hosted read-only checks confirm 18 CertVault RLS tables, a private bucket and token client-deny policy. No hosted rows, migrations or account settings were changed.
+- Playwright MCP inspected 1440px/390px screenshots, reload/disk persistence, document-only search, oversized rejection, mobile navigation/dialog/Escape and injected API failure/recovery. No horizontal overflow. No real scans, deployment, emails, AI calls or new external test accounts.
+- Fixed: backend document-text/tag search wiring; metadata-clobbering favorite requests; misleading Auth/data errors and Redis cleanup exception; account loading/search races and unsaved preference overwrite; smoke-test queue isolation; live-test trace privacy; new misleading sample log wording; favicon; clipped category label; production CSP `unsafe-eval` removal. Nonce/inline CSP work remains.
+
+### Priority and blockers
+1. **P0:** unify Supabase authentication/persistence with the main vault; implement signup/confirmation/reset, full owner-scoped operations, pagination and cloud audit. These are missing code, not just missing keys.
+2. **P0:** quarantine + antivirus + parser isolation/OCR/resource bounds; complete scanned-object Storage upload and authorized download/signing; test cross-user positive/negative Storage HTTP paths.
+3. **P0:** API-to-Celery dispatch, durable state machine/cursors/retries/quotas/cancellation, transactional notifications outbox and recovery tests.
+4. **P0:** Gmail then Graph OAuth callback/consent/token-vault/revocation and incremental sync. Credentials are absent (`GOOGLE_CLIENT_*`, `MICROSOFT_CLIENT_*`, `OAUTH_TOKEN_ENCRYPTION_KEY`) and callbacks are not implemented. Do not enable real scanning.
+5. Complete production preview/export/deletion/retention/review/preferences/accessibility, then P1 hosted sharing/profiles/QR/manual social features and consented AI.
+6. External setup: server-only ingestion DB/Storage permissions and credential, Auth SMTP/verified sender/Site URL/callback allowlist, consented provider test mailboxes and OAuth registrations, production Redis/worker/scanner/OCR hosting, optional AI/notification provider credentials and budgets. Exact setup and official links are in the audit; adding keys alone will not finish the app.
+7. Before launch: HTTPS/Secure cookies, production origin/CSRF/CSP nonce controls, secret rotation, legal/retention/region/license decisions, executed CI, monitoring/backups/restore tests and provider approvals. Existing unrelated Supabase tables/policies remain untouched.
+
+Next work should implement the secure authenticated manual-ingestion slice with mocks and disabled live mailbox features. No deployment or paid-service activation is authorized.
+
 ## Plan (2026-11-15)
 All specifications and starter instructions reviewed. Started from specification-only repository. Dedicated project Git repository now initialized (user's original initialization was in the home directory).
 
@@ -17,7 +37,7 @@ All specifications and starter instructions reviewed. Started from specification
 - Malware scanning and isolated parsing are required before real untrusted file ingestion. Link fetching stays disabled until DNS-pinned SSRF protection is verified.
 - Initial inspection found Node/Python/pnpm but no credentials or Docker. Docker and dedicated Git are now configured; Supabase development access was later explicitly authorized (below).
 
-## Checkpoint (2026-11-15)
+## Historical completed-milestone evidence (2026-11-15)
 
 ### Implemented and verified
 - Local workspace: explicit synthetic onboarding, Gmail/Outlook sample consent and discovery, idempotent imports, 50 MiB approval policy / 100 MiB hard cap, approve/reject, PDF upload/text extraction, hash dedupe, metadata editing, search/filter/favorites, tags, private collections, atomic bulk favorite/trash/restore, PDF download, notifications/audit, JSON metadata export, expiring/revocable shares, opt-in profiles, editable template captions and dark mode. No AI calls or social publishing.

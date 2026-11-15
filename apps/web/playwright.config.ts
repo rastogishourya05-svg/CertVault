@@ -30,7 +30,12 @@ export default defineConfig({
   ],
   use: {
     baseURL: "http://127.0.0.1:3000",
-    trace: process.env.CI ? "retain-on-failure" : "off",
+    trace:
+      process.env.CERTVAULT_LIVE_TESTS === "1"
+        ? "off"
+        : process.env.CI
+          ? "retain-on-failure"
+          : "off",
     channel: process.env.PLAYWRIGHT_CHANNEL,
   },
   projects: [

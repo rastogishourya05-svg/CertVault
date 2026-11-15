@@ -127,6 +127,43 @@ export function VaultApp() {
   const modalOpener = useRef<HTMLElement | null>(null);
   const approvals = imports.filter((i) => i.status === "awaiting_approval");
   const unread = notices.filter((n) => !n.read).length;
+  const [searchResult, setSearchResult] = useState<{
+    query: string;
+    trashed: boolean;
+    items: Certificate[];
+  } | null>(null);
+  const searchQuery = query.trim();
+  const inTrash = view === "Trash";
+  const searching =
+    !!searchQuery &&
+    (searchResult?.query !== searchQuery || searchResult.trashed !== inTrash);
+  useEffect(() => {
+    if (!session || !searchQuery) return;
+    let active = true;
+    const timer = setTimeout(() => {
+      api<Certificate[]>(
+        `/certificates?q=${encodeURIComponent(searchQuery)}&trashed=${inTrash}`,
+      )
+        .then((items) => {
+          if (active)
+            setSearchResult({ query: searchQuery, trashed: inTrash, items });
+        })
+        .catch((e) => {
+          if (active) {
+            setError(e.message);
+            setSearchResult({
+              query: searchQuery,
+              trashed: inTrash,
+              items: [],
+            });
+          }
+        });
+    }, 200);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [session, searchQuery, inTrash, certs, trash]);
 
   async function refresh() {
     const [a, b, c, d, e, f, g, h, i, j] = await Promise.all([
@@ -208,13 +245,18 @@ export function VaultApp() {
     setConsent(false);
     setModal(next);
   }
-  const filtered = (view === "Trash" ? trash : certs).filter(
+  const filtered = (
+    searchQuery
+      ? searching
+        ? []
+        : searchResult?.items || []
+      : inTrash
+        ? trash
+        : certs
+  ).filter(
     (c) =>
       (!favorites || c.favorite) &&
-      (category === "All certificates" || c.category === category) &&
-      `${c.title} ${c.issuer} ${c.category} ${(c.tags || []).join(" ")}`
-        .toLowerCase()
-        .includes(query.toLowerCase()),
+      (category === "All certificates" || c.category === category),
   );
   async function start() {
     await run(async () => {
@@ -684,7 +726,7 @@ export function VaultApp() {
                     value={category}
                     onChange={(e) => setCategory(e.target.value)}
                   >
-                    <option>All certificates</option>
+                    <option value="All certificates">Category</option>
                     {["Technology", "Design", "Business", "Other"].map((c) => (
                       <option key={c}>{c}</option>
                     ))}
@@ -753,7 +795,11 @@ export function VaultApp() {
                   </Button>
                 </div>
               )}
-              {filtered.length > 0 ? (
+              {searching ? (
+                <div className="empty-state" role="status">
+                  Searching certificate metadata and document text…
+                </div>
+              ) : filtered.length > 0 ? (
                 <div className={list ? "certificate-list" : "certificate-grid"}>
                   {filtered.map((c, i) => (
                     <article className="certificate-card" key={c.id}>

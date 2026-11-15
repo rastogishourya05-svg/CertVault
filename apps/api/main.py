@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import Response as RawResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -237,7 +237,9 @@ def session_status(request: Request):
 
 
 @app.get("/certificates", response_model=list[Certificate])
-def list_certificates(q: str = "", trashed: bool = False, user=Depends(owner)):
+def list_certificates(
+    q: str = Query(default="", max_length=200), trashed: bool = False, user=Depends(owner)
+):
     with db() as c:
         result = c.execute(
             "SELECT * FROM certificates WHERE owner=? AND trashed=? ORDER BY created DESC",
@@ -246,7 +248,8 @@ def list_certificates(q: str = "", trashed: bool = False, user=Depends(owner)):
         return [
             certificate(r)
             for r in result
-            if q.casefold() in f"{r['title']} {r['issuer']} {r['category']} {r['text']}".casefold()
+            if q.strip().casefold()
+            in f"{r['title']} {r['issuer']} {r['category']} {r['text']} {r['tags']}".casefold()
         ]
 
 
@@ -502,7 +505,7 @@ def sync(key: str, user=Depends(owner)):
         ).fetchall()
         for item in pending:
             process_import(c, item)
-        audit(c, user, "Sample mailbox scan completed; unrelated sample email excluded")
+        audit(c, user, "Synthetic fixture scan completed")
     return {"ok": True, "mode": "demo"}
 
 

@@ -28,6 +28,7 @@ export default function DevelopmentAccount() {
     [configured, setConfigured] = useState(false),
     [authenticated, setAuthenticated] = useState(false),
     [busy, setBusy] = useState(false),
+    [loadingVault, setLoadingVault] = useState(true),
     [error, setError] = useState(""),
     [message, setMessage] = useState("");
   const [email, setEmail] = useState(""),
@@ -38,16 +39,15 @@ export default function DevelopmentAccount() {
       display_name: "Your workspace",
       download_limit_bytes: 52428800,
     });
-  const refresh = useCallback(async () => {
-    const [c, p] = await Promise.all([
-      api<LiveCertificate[]>(
+  const refresh = useCallback(
+    async (accept: () => boolean = () => true) => {
+      const c = await api<LiveCertificate[]>(
         `/account/certificates?q=${encodeURIComponent(query)}`,
-      ),
-      api<Profile>("/account/profile"),
-    ]);
-    setCerts(c);
-    setProfile(p);
-  }, [query]);
+      );
+      if (accept()) setCerts(c);
+    },
+    [query],
+  );
   useEffect(() => {
     api<{ configured: boolean }>("/account/config")
       .then(async (c) => {
@@ -62,11 +62,36 @@ export default function DevelopmentAccount() {
   }, []);
   useEffect(() => {
     if (!authenticated) return;
+    let active = true;
     const timer = setTimeout(() => {
-      refresh().catch((e) => setError(e.message));
+      setLoadingVault(true);
+      refresh(() => active)
+        .catch((e) => {
+          if (active) setError(e.message);
+        })
+        .finally(() => {
+          if (active) setLoadingVault(false);
+        });
     }, 200);
-    return () => clearTimeout(timer);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
   }, [authenticated, refresh]);
+  useEffect(() => {
+    if (!authenticated) return;
+    let active = true;
+    api<Profile>("/account/profile")
+      .then((p) => {
+        if (active) setProfile(p);
+      })
+      .catch((e) => {
+        if (active) setError(e.message);
+      });
+    return () => {
+      active = false;
+    };
+  }, [authenticated]);
   async function action(callback: () => Promise<unknown>) {
     setBusy(true);
     setError("");
@@ -221,12 +246,18 @@ export default function DevelopmentAccount() {
             <Search size={18} />
             <input
               aria-label="Search development certificates"
+              disabled={busy}
+              maxLength={200}
               placeholder="Search titles, issuers and extracted text…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
           </label>
-          {certs.length === 0 ? (
+          {loadingVault ? (
+            <div className="empty-state" role="status">
+              Loading your private certificates…
+            </div>
+          ) : certs.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">
                 <Award size={30} />
@@ -257,12 +288,10 @@ export default function DevelopmentAccount() {
                         onClick={() =>
                           action(async () => {
                             await api(
-                              `/account/certificates/${c.id}`,
-                              "PATCH",
+                              `/account/certificates/${c.id}/favorite`,
+                              "PUT",
                               {
-                                title: c.title,
-                                issuer: c.issuer || "",
-                                favorite: !c.favorite,
+                                value: !c.favorite,
                               },
                             );
                             await refresh();

@@ -48,6 +48,7 @@ def account(client):
         "profile": [],
         "certs": [],
         "reject_patch": False,
+        "rest_error": None,
     }
     settings = AccountConfig(
         url="https://abcdefghijklmnopqrst.supabase.co",
@@ -59,6 +60,10 @@ def account(client):
     def handle(request):
         requests.append(request)
         path = request.url.path
+        if path.startswith("/rest/") and state["rest_error"]:
+            return httpx.Response(
+                state["rest_error"], json={"message": "private database diagnostic"}
+            )
         if path.endswith("/token"):
             if state["invalid_login"]:
                 return httpx.Response(400, json={"msg": "private provider diagnostics"})
@@ -209,3 +214,48 @@ def test_unconfigured_account_is_explicit(client, tmp_path, monkeypatch):
         ).status_code
         == 503
     )
+
+
+def test_favorite_does_not_resubmit_or_overwrite_metadata(account):
+    client, _, requests, state, _ = account
+    sign_in(client)
+    result = client.put(f"/account/certificates/{OWNER}/favorite", json={"value": True})
+    assert result.status_code == 200
+    assert json.loads(requests[-1].content) == {"favorite": True}
+    assert requests[-1].url.params["owner_id"] == f"eq.{OWNER}"
+    state["reject_patch"] = True
+    assert (
+        client.put(f"/account/certificates/{OTHER}/favorite", json={"value": True}).status_code
+        == 404
+    )
+    assert (
+        client.put(
+            f"/account/certificates/{OWNER}/favorite", json={"value": True, "title": "stale title"}
+        ).status_code
+        == 422
+    )
+
+
+def test_data_validation_error_is_not_misreported_as_bad_login(account):
+    client, sessions, _, state, _ = account
+    sign_in(client)
+    state["rest_error"] = 422
+    result = client.get("/account/profile")
+    assert result.status_code == 422
+    assert "private database" not in result.text
+    assert any(k.startswith("cv:session:") for k in sessions.values)
+
+
+def test_revoked_session_cleanup_failure_does_not_leak_store_errors(account, monkeypatch):
+    client, sessions, _, state, _ = account
+    sign_in(client)
+    state["expired"] = True
+
+    async def fail(*args):
+        raise RedisError("private cleanup details")
+
+    monkeypatch.setattr(sessions, "delete", fail)
+    result = client.get("/account/status")
+    assert result.status_code == 200
+    assert not result.json()["authenticated"]
+    assert "private cleanup" not in result.text

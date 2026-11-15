@@ -216,3 +216,15 @@ def test_request_limit_before_multipart_and_chunked_json(client):
         headers={"Content-Type": "application/json"},
     )
     assert response.status_code == 413
+
+
+def test_search_includes_extracted_document_text_and_tags(client):
+    data = sample_pdf("OnlyInsideDocument", "Source")
+    key = client.post("/certificates/upload", files={"file": ("generic.pdf", data)}).json()["id"]
+    assert len(client.get("/certificates?q=OnlyInsideDocument").json()) == 1
+    client.patch(
+        f"/certificates/{key}",
+        json={"title": "Generic", "issuer": "Source", "category": "Other", "tags": ["needle-tag"]},
+    )
+    assert len(client.get("/certificates?q=needle-tag").json()) == 1
+    assert client.get("/certificates?q=" + ("a" * 201)).status_code == 422

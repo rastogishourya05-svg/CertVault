@@ -59,6 +59,11 @@ class AccountCertificateEdit(BaseModel):
     favorite: bool
 
 
+class AccountFavorite(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    value: bool
+
+
 class Gateway:
     def __init__(self, settings: AccountConfig, client: httpx.AsyncClient, sessions):
         self.config, self.client, self.sessions = settings, client, sessions
@@ -82,10 +87,20 @@ class Gateway:
             ) as response:
                 if response.status_code == 429:
                     raise HTTPException(429, "Too many requests. Please wait and try again.")
-                if response.status_code in (400, 401, 403, 422):
+                if response.status_code == 401 or (
+                    path.startswith("/auth/") and response.status_code in (400, 403, 422)
+                ):
                     raise HTTPException(
                         401,
                         "Account authorization failed. Check your credentials or sign in again.",
+                    )
+                if response.status_code == 403:
+                    raise HTTPException(
+                        403, "You do not have permission to access this account resource."
+                    )
+                if response.status_code in (400, 422):
+                    raise HTTPException(
+                        422, "Account data is invalid. Check the entered values and retry."
                     )
                 if not 200 <= response.status_code < 300:
                     raise HTTPException(503, "Account service unavailable. Please retry.")
@@ -151,7 +166,10 @@ class Gateway:
             raise HTTPException(503, "Account session service unavailable. Please retry.") from exc
         except HTTPException as exc:
             if exc.status_code == 401:
-                await self.sessions.delete("cv:session:" + sid)
+                try:
+                    await self.sessions.delete("cv:session:" + sid)
+                except RedisError:
+                    pass  # Preserve the authorization denial even if cleanup is unavailable.
             raise
 
 
@@ -289,6 +307,23 @@ async def save_profile(body: AccountProfile, request: Request, g: Gateway = Depe
             token=token,
             body={"owner_id": user_id, **body.model_dump()},
         )
+    return {"ok": True}
+
+
+@router.put("/certificates/{key}/favorite")
+async def favorite_certificate(
+    key: uuid.UUID, body: AccountFavorite, request: Request, g: Gateway = Depends(gateway)
+):
+    _, user_id, token = await g.identity(request)
+    result = await g.request(
+        "PATCH",
+        "/rest/v1/certificates",
+        token=token,
+        params={"id": "eq." + str(key), "owner_id": "eq." + user_id},
+        body={"favorite": body.value},
+    )
+    if not result:
+        raise HTTPException(404, "Certificate not found")
     return {"ok": True}
 
 

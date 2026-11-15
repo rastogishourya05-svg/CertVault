@@ -219,6 +219,15 @@ test("manual upload validates content and keyboard dialogs return focus", async 
   await expect(
     page.getByRole("button", { name: "Preview sample" }),
   ).toBeVisible();
+  await page.reload();
+  await page
+    .getByRole("textbox", { name: "Search certificates" })
+    .fill("Manual upload fixture");
+  await expect(
+    page.getByRole("button", { name: "Preview sample" }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Preview / })).toHaveCount(1);
+  await page.getByRole("textbox", { name: "Search certificates" }).fill("");
   await add.click();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);

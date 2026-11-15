@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -22,6 +23,7 @@ def main():
             client.post("/connections", json={"provider": "gmail", "consent": True})
             connection = client.get("/connections").json()[0]["id"]
             with open(".local/worker-check.log", "w") as log:
+                queue = "certvault-smoke-" + uuid.uuid4().hex
                 worker = subprocess.Popen(
                     [
                         sys.executable,
@@ -35,13 +37,14 @@ def main():
                         "--without-gossip",
                         "--without-mingle",
                         "--without-heartbeat",
+                        "--queues=" + queue,
                     ],
                     stdout=log,
                     stderr=log,
                     env=os.environ.copy(),
                 )
                 try:
-                    sync_demo_mailbox.delay(owner, connection)
+                    sync_demo_mailbox.apply_async(args=[owner, connection], queue=queue)
                     deadline = time.monotonic() + 45
                     while time.monotonic() < deadline:
                         if len(client.get("/certificates").json()) == 3:

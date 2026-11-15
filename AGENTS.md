@@ -31,3 +31,4 @@ A feature is done only when it works end-to-end, has tests, proper authorization
 - Run API with `--no-access-log` to avoid logging capability URLs. Never put share tokens in analytics or operational logs.
 - Docker services live in `infra/compose.yaml`; the `test` profile is a disposable PostgreSQL database with explicit Supabase-compatible stubs. Passing these tests does not establish hosted Supabase integration.
 - Read `docs/IMPLEMENTATION_STATUS.md` for verified evidence and remaining work before resuming. Do not silently enable real integrations or replace synthetic adapters with untested live claims.
+- The 2026-11-15 production-gap audit is in `docs/IMPLEMENTATION_AUDIT.md`. Prioritize authenticated manual ingestion before live mailbox wiring; historical Auth evidence is not a current live regression pass.

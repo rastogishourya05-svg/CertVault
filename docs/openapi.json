@@ -157,6 +157,57 @@
         }
       }
     },
+    "/account/certificates/{key}/favorite": {
+      "put": {
+        "tags": [
+          "Supabase development account"
+        ],
+        "summary": "Favorite Certificate",
+        "operationId": "favorite_certificate_account_certificates__key__favorite_put",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountFavorite"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/account/certificates": {
       "get": {
         "tags": [
@@ -341,6 +392,7 @@
             "required": false,
             "schema": {
               "type": "string",
+              "maxLength": 200,
               "default": "",
               "title": "Q"
             }
@@ -1445,6 +1497,20 @@
           "favorite"
         ],
         "title": "AccountCertificateEdit"
+      },
+      "AccountFavorite": {
+        "properties": {
+          "value": {
+            "type": "boolean",
+            "title": "Value"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "title": "AccountFavorite"
       },
       "AccountProfile": {
         "properties": {
