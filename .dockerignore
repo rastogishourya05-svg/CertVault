@@ -1,0 +1,11 @@
+.git
+.local
+.venv
+node_modules
+**/node_modules
+**/.next
+.env*
+**/__pycache__
+docs/evidence
+test-results
+.playwright-mcp

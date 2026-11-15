@@ -36,6 +36,10 @@ jobs:
           docker compose -f infra/compose.yaml exec -T postgres-test psql -U postgres -d certvault_test -v ON_ERROR_STOP=1 < infra/sql/test-bootstrap.sql
           for migration in supabase/migrations/*.sql; do docker compose -f infra/compose.yaml exec -T postgres-test psql -U postgres -d certvault_test -v ON_ERROR_STOP=1 < "$migration"; done
           docker compose -f infra/compose.yaml exec -T postgres-test psql -U postgres -d certvault_test -v ON_ERROR_STOP=1 < infra/sql/test-rls.sql
+      - name: Transactional ingestion with mocked providers
+        env:
+          CERTVAULT_TEST_DATABASE_URL: postgresql://postgres:local-test-only@127.0.0.1:54329/certvault_test
+        run: python -m pytest tests/test_pipeline.py -q
       - run: pnpm --filter web exec playwright install --with-deps chromium
       - name: Browser journeys
         run: pnpm e2e

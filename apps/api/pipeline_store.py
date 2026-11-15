@@ -1,0 +1,219 @@
+"""Transactional ingestion repository, always running as a non-bypass RLS role."""
+
+import hashlib
+import uuid
+from contextlib import contextmanager
+
+from apps.api.postgres import connect
+
+
+class PipelineStore:
+    def __init__(self, dsn: str, owner: str):
+        self.dsn, self.owner = dsn, str(uuid.UUID(owner))
+
+    @contextmanager
+    def db(self):
+        with connect(self.dsn) as db:
+            db.execute("set local role certvault_pipeline")
+            db.execute("select set_config('certvault.owner',%s,true)", (self.owner,))
+            db.execute("set local statement_timeout='10s'")
+            yield db
+
+    def connection(self, key):
+        with self.db() as db:
+            return db.execute(
+                "select c.*,m.ciphertext,m.expires_at,m.scan_days,m.automatic "
+                "from public.email_connections c join private.mailbox_tokens m "
+                "on m.connection_id=c.id and m.owner_id=c.owner_id where c.id=%s and c.owner_id=%s",
+                (key, self.owner),
+            ).fetchone()
+
+    def connect(self, label, ciphertext, expires, days, automatic):
+        with self.db() as db:
+            row = db.execute(
+                "insert into public.email_connections(owner_id,provider,account_label,scopes,state,consent_at) "
+                "values (%s,'gmail',%s,array['https://www.googleapis.com/auth/gmail.readonly'],'connected',now()) "
+                "on conflict(owner_id,provider,account_label) do update set state='connected',consent_at=now(),cursor=null returning id",
+                (self.owner, label),
+            ).fetchone()
+            key = row["id"]
+            db.execute(
+                "insert into private.mailbox_tokens(connection_id,owner_id,ciphertext,expires_at,scan_days,automatic) "
+                "values(%s,%s,%s,%s,%s,%s) on conflict(connection_id) do update set "
+                "ciphertext=excluded.ciphertext,expires_at=excluded.expires_at,scan_days=excluded.scan_days,automatic=excluded.automatic",
+                (key, self.owner, ciphertext, expires, days, automatic),
+            )
+            self.event(db, "mailbox_connected", key)
+            return str(key)
+
+    def event(self, db, action, resource=None):
+        db.execute(
+            "insert into public.audit_events(owner_id,action,resource_id) values(%s,%s,%s)",
+            (self.owner, action, resource),
+        )
+
+    def notify(self, db, key, kind, message):
+        db.execute(
+            "insert into public.notifications(owner_id,event_key,kind,safe_message) values(%s,%s,%s,%s) "
+            "on conflict(owner_id,event_key) do nothing",
+            (self.owner, key, kind, message),
+        )
+
+    def enqueue(self, connection):
+        with self.db() as db:
+            # Serialize enqueue per connection; there is at most one outstanding job.
+            row = db.execute(
+                "select id from public.email_connections where id=%s and owner_id=%s and state='connected' for update",
+                (connection, self.owner),
+            ).fetchone()
+            if not row:
+                raise ValueError("Mailbox not connected")
+            job = db.execute(
+                "select id from public.sync_jobs where owner_id=%s and connection_id=%s and status in ('queued','running','retry') limit 1",
+                (self.owner, connection),
+            ).fetchone()
+            if not job:
+                job = db.execute(
+                    "insert into public.sync_jobs(owner_id,connection_id,idempotency_key) values(%s,%s,%s) returning id",
+                    (self.owner, connection, str(uuid.uuid4())),
+                ).fetchone()
+            return str(job["id"])
+
+    def snapshot(self):
+        with self.db() as db:
+
+            def rows(sql):
+                return db.execute(sql, (self.owner,)).fetchall()
+
+            return {
+                "connections": rows(
+                    "select c.id,c.account_label,c.state,m.automatic,m.scan_days from public.email_connections c join private.mailbox_tokens m on m.connection_id=c.id where c.owner_id=%s order by c.created_at desc"
+                ),
+                "jobs": rows(
+                    "select id,status,attempts,safe_error_code,updated_at from public.sync_jobs where owner_id=%s order by created_at desc limit 20"
+                ),
+                "imports": rows(
+                    "select id,filename,declared_bytes,status,safe_error,approved from private.pipeline_items where owner_id=%s order by created_at desc limit 100"
+                ),
+                "notifications": rows(
+                    "select id,kind,safe_message,read_at from public.notifications where owner_id=%s order by created_at desc limit 20"
+                ),
+            }
+
+    def decide(self, key, approved):
+        with self.db() as db:
+            row = db.execute(
+                "update private.pipeline_items set approved=%s,status=%s,updated_at=now() "
+                "where id=%s and owner_id=%s and status='awaiting_approval' returning connection_id",
+                (approved, "eligible" if approved else "rejected", key, self.owner),
+            ).fetchone()
+            if row:
+                self.event(db, "import_approved" if approved else "import_rejected", key)
+            return row
+
+    def disconnect(self, connection):
+        with self.db() as db:
+            row = db.execute(
+                "update public.email_connections set state='disconnected',cursor=null where id=%s and owner_id=%s returning id",
+                (connection, self.owner),
+            ).fetchone()
+            if not row:
+                return False
+            db.execute(
+                "delete from private.mailbox_tokens where connection_id=%s and owner_id=%s",
+                (connection, self.owner),
+            )
+            db.execute(
+                "update public.sync_jobs set status='cancelled',updated_at=now() where connection_id=%s and owner_id=%s and status in ('queued','running','retry')",
+                (connection, self.owner),
+            )
+            self.event(db, "mailbox_disconnected", connection)
+            return True
+
+    def discover(self, connection, message, attachment, filename, size, threshold):
+        from apps.api.domain import size_decision
+
+        status = size_decision(size, threshold)
+        with self.db() as db:
+            row = db.execute(
+                "insert into private.pipeline_items(owner_id,connection_id,message_id,attachment_id,filename,declared_bytes,status) "
+                "values(%s,%s,%s,%s,%s,%s,%s) on conflict(owner_id,connection_id,message_id,attachment_id) "
+                "do update set filename=private.pipeline_items.filename returning *",
+                (self.owner, connection, message, attachment, filename[:160], size, status),
+            ).fetchone()
+            if row["status"] == "awaiting_approval":
+                self.notify(
+                    db,
+                    "approval:" + str(row["id"]),
+                    "approval",
+                    "A certificate exceeds your download limit and needs approval.",
+                )
+            return row
+
+    def item_state(self, key, status, error=None):
+        with self.db() as db:
+            db.execute(
+                "update private.pipeline_items set status=%s,safe_error=%s,updated_at=now() where id=%s and owner_id=%s",
+                (status, error, key, self.owner),
+            )
+            if status in ("needs_review", "failed", "awaiting_approval"):
+                self.notify(
+                    db,
+                    status + ":" + str(key),
+                    status,
+                    "An import needs your attention. Open import activity for details.",
+                )
+
+    def complete(self, item, data, text):
+        digest = hashlib.sha256(data).hexdigest()
+        with self.db() as db:
+            # Serialize same-owner hashes and disconnect vs final commit.
+            db.execute(
+                "select pg_advisory_xact_lock(hashtextextended(%s,0))", (self.owner + digest,)
+            )
+            active = db.execute(
+                "select id from public.email_connections where id=%s and owner_id=%s and state='connected' for update",
+                (item["connection_id"], self.owner),
+            ).fetchone()
+            if not active:
+                raise ValueError("Mailbox disconnected")
+            existing = db.execute(
+                "select certificate_id from public.certificate_files where owner_id=%s and sha256=%s",
+                (self.owner, digest),
+            ).fetchone()
+            if existing:
+                key, status = existing["certificate_id"], "duplicate"
+            else:
+                key, status = uuid.uuid4(), "stored"
+                title = (
+                    item["filename"].removesuffix(".pdf").removesuffix(".PDF")[:160]
+                    or "Certificate needs review"
+                )
+                db.execute(
+                    "insert into public.certificates(id,owner_id,title,source,extracted_text,provenance) values(%s,%s,%s,'gmail',%s,%s::jsonb)",
+                    (
+                        key,
+                        self.owner,
+                        title,
+                        text,
+                        '{"title":"attachment filename; needs review","extracted_text":"isolated PDF text; not authenticity verification"}',
+                    ),
+                )
+                db.execute(
+                    "insert into public.certificate_files(owner_id,certificate_id,object_path,sha256,mime,bytes,scanned_at) values(%s,%s,%s,%s,'application/pdf',%s,now())",
+                    (self.owner, key, self.owner + "/" + digest + ".pdf", digest, len(data)),
+                )
+            db.execute(
+                "update private.pipeline_items set status=%s,certificate_id=%s,observed_bytes=%s,safe_error=null,updated_at=now() where id=%s and owner_id=%s",
+                (status, key, len(data), item["id"], self.owner),
+            )
+            self.notify(
+                db,
+                status + ":" + str(key),
+                status,
+                "A certificate was saved to your private vault."
+                if status == "stored"
+                else "A duplicate certificate was skipped.",
+            )
+            self.event(db, "certificate_" + status, key)
+            return str(key)

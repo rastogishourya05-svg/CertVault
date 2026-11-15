@@ -1,5 +1,7 @@
 # CertVault implementation audit — 2026-11-15
 
+This is the pre-pipeline audit snapshot. The subsequent disabled-by-default Gmail PDF pipeline is described in [GMAIL_PIPELINE.md](GMAIL_PIPELINE.md) and the latest checkpoint in [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md); live Gmail and positive hosted Storage verification remain outstanding.
+
 **Verdict: a functional local development demonstrator and a limited Supabase account slice, not a production-ready certificate application.** Credentials alone will not complete the missing integrations. No deployment, real mailbox scan, new external Auth account, email, AI call or paid resource was enabled during this audit.
 
 Reviewed all application/API/worker modules, migrations, infrastructure, scripts and tests against PRD.md, ARCHITECTURE.md, SECURITY.md and TEST_PLAN.md. Historical live-account results are explicitly separated from this audit's tests.

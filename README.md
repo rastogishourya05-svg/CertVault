@@ -1,5 +1,7 @@
 # CertVault
 
+Gmail PDF ingestion development code is now available behind a disabled live flag. See [pipeline setup and verified boundaries](docs/GMAIL_PIPELINE.md). No real mailbox scan or production deployment has been performed.
+
 A private certificate vault built with Next.js/TypeScript/Tailwind/shadcn-style Radix components, FastAPI, and Celery/Redis. **Current runtime is loopback-only development, not a production release.** The main workspace uses isolated SQLite sessions/private local files and synthetic Gmail/Outlook samples. `/account` provides a separately configured, verified Supabase sign-in/private metadata slice. Do not upload real or untrusted documents.
 
 ## Start locally
@@ -56,7 +58,7 @@ E2E automatically starts and waits for app/API servers, or reuses running local 
 - `infra/sql`: disposable PostgreSQL ownership tests and a manual destructive development rollback.
 - `infra`: development Docker services and a non-root API image template. The image fails closed until explicitly configured; it is not ready for production deployment.
 
-See [implementation checkpoint](docs/IMPLEMENTATION_STATUS.md), [integration and deployment runbook](docs/OPERATIONS.md), and the authoritative [PRD](docs/PRD.md). Supabase sign-in/out, refresh, private metadata reads/favorites and preference writes have been tested against the approved development project. Registration/reset, document Storage HTTP flows, full OAuth callbacks/orchestration, scanner/OCR, safe link fetching and AI generation remain incomplete. Nothing has been deployed.
+See [implementation checkpoint](docs/IMPLEMENTATION_STATUS.md), [integration and deployment runbook](docs/OPERATIONS.md), and the authoritative [PRD](docs/PRD.md). Supabase sign-in/out, refresh, private metadata reads/favorites and preference writes have been tested against the approved development project. Registration/reset, document Storage HTTP flows, live verification of the new Gmail pipeline/Storage, OCR, safe link fetching and AI generation remain incomplete. Nothing has been deployed.
 
 ## Supabase development account slice
 

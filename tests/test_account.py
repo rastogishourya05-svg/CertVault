@@ -20,6 +20,9 @@ class MemorySessions:
     async def get(self, key):
         return self.values.get(key)
 
+    async def getdel(self, key):
+        return self.values.pop(key, None)
+
     async def setex(self, key, ttl, value):
         self.values[key] = value
 
@@ -117,6 +120,105 @@ def sign_in(client):
     return client.post(
         "/account/login", json={"email": "learner@example.test", "password": "a-test-password"}
     )
+
+
+def test_pipeline_is_disabled_and_never_authorizes_without_configuration(account, monkeypatch):
+    from apps.api import pipeline_routes
+
+    client, _, requests, _, _ = account
+    monkeypatch.setattr(pipeline_routes, "load_pipeline", lambda: None)
+    sign_in(client)
+    assert client.get("/account/pipeline/status").json()["enabled"] is False
+    result = client.post("/account/pipeline/gmail/authorize", json={"consent": True})
+    assert result.status_code == 503
+    assert all("google" not in str(r.url) for r in requests)
+
+
+def test_pipeline_oauth_pkce_session_binding_and_single_use(account, monkeypatch):
+    from urllib.parse import parse_qs, urlsplit
+
+    from apps.api import pipeline_routes
+    from apps.api.pipeline_config import PipelineConfig
+    from apps.api.providers import Tokens
+
+    client, sessions, _, _, _ = account
+    config = PipelineConfig(
+        database_url="postgresql://unused",
+        storage_key="mock-key",
+        oauth_key=Fernet.generate_key().decode(),
+        google_client_id="mock-client",
+        google_client_secret="mock-secret",
+        live_imports_enabled=True,
+    )
+    monkeypatch.setattr(pipeline_routes, "load_pipeline", lambda: config)
+    connected = []
+
+    class Store:
+        def __init__(self, dsn, owner):
+            self.owner = owner
+
+        def connect(self, *args):
+            connected.append(args)
+
+    async def exchange(*args):
+        return Tokens(access_token="mail-access", refresh_token="mail-refresh")
+
+    async def profile(*args):
+        return {"emailAddress": "synthetic@example.test"}
+
+    monkeypatch.setattr(pipeline_routes, "PipelineStore", Store)
+    monkeypatch.setattr(pipeline_routes, "exchange_code", exchange)
+    monkeypatch.setattr(pipeline_routes.GmailAdapter, "profile", profile)
+    sign_in(client)
+    denied = client.post("/account/pipeline/gmail/authorize", json={"consent": False})
+    assert denied.status_code == 422
+    result = client.post(
+        "/account/pipeline/gmail/authorize", json={"consent": True, "scan_days": 7}
+    )
+    params = parse_qs(urlsplit(result.json()["url"]).query)
+    assert params["code_challenge_method"] == ["S256"]
+    assert params["redirect_uri"] == [config.redirect_uri]
+    state = params["state"][0]
+    assert b"mock-secret" not in next(
+        v for k, v in sessions.values.items() if k.startswith("cv:oauth:")
+    )
+    path = "/account/pipeline/gmail/callback?state=" + state + "&code=synthetic-code"
+    response = client.get(path, follow_redirects=False)
+    assert response.status_code == 303 and response.headers["location"].endswith(
+        "mailbox=connected"
+    )
+    assert len(connected) == 1 and b"mail-access" not in connected[0][1]
+    assert client.get(path, follow_redirects=False).headers["location"].endswith("mailbox=failed")
+    assert len(connected) == 1
+
+
+def test_pipeline_oauth_requires_callback_binding(account, monkeypatch):
+    from urllib.parse import parse_qs, urlsplit
+
+    from apps.api import pipeline_routes
+    from apps.api.pipeline_config import PipelineConfig
+
+    client, _, requests, _, _ = account
+    config = PipelineConfig(
+        database_url="postgresql://unused",
+        storage_key="mock-key",
+        oauth_key=Fernet.generate_key().decode(),
+        google_client_id="mock-client",
+        google_client_secret="mock-secret",
+        live_imports_enabled=True,
+    )
+    monkeypatch.setattr(pipeline_routes, "load_pipeline", lambda: config)
+    sign_in(client)
+    result = client.post("/account/pipeline/gmail/authorize", json={"consent": True})
+    state = parse_qs(urlsplit(result.json()["url"]).query)["state"][0]
+    client.cookies.delete("cv_mail_oauth")
+    response = client.get(
+        "/account/pipeline/gmail/callback",
+        params={"state": state, "code": "synthetic"},
+        follow_redirects=False,
+    )
+    assert response.headers["location"].endswith("mailbox=failed")
+    assert all("google" not in str(r.url) for r in requests)
 
 
 def test_opaque_cookie_and_encrypted_server_tokens(account):

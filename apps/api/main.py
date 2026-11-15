@@ -15,6 +15,8 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from apps.api.account import router as account_router
 from apps.api.domain import HARD_CAP, MIB, PolicyError, bounded_bytes, digest, size_decision
 from apps.api.limits import BodyLimitMiddleware
+from apps.api.pipeline_routes import router as pipeline_router
+from apps.api.postgres import DatabaseError
 from apps.api.processing import extract_pdf, sample_pdf
 from apps.api.store import data_dir, db, initialize, profile_view, rows
 
@@ -39,8 +41,18 @@ async def lifespan(app):
 
 app = FastAPI(title="CertVault API", version="0.1.0", lifespan=lifespan)
 app.include_router(account_router)
+app.include_router(pipeline_router)
 app.add_middleware(BodyLimitMiddleware)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"])
+
+
+@app.exception_handler(DatabaseError)
+async def safe_database_error(request: Request, exc: DatabaseError):
+    return RawResponse(
+        '{"detail":"Pipeline database unavailable; retry or check configuration"}',
+        status_code=503,
+        media_type="application/json",
+    )
 
 
 @app.middleware("http")

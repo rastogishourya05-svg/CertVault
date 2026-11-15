@@ -29,6 +29,10 @@ class RetryableProviderError(ProviderUnavailable):
     pass
 
 
+class ProviderNotFound(ProviderUnavailable):
+    pass
+
+
 class Tokens(BaseModel):
     access_token: SecretStr
     refresh_token: SecretStr | None = None
@@ -150,6 +154,8 @@ async def safe_json(client: httpx.AsyncClient, method: str, url: str, **kwargs) 
                 raise RetryableProviderError(
                     "Mailbox provider throttled or temporarily unavailable"
                 )
+            if response.status_code == 404:
+                raise ProviderNotFound("Provider resource no longer available")
             if not 200 <= response.status_code < 300:
                 raise ProviderUnavailable(
                     "Mailbox authorization or request failed; reconnect if needed"
@@ -216,16 +222,19 @@ class GmailAdapter:
     def __init__(self, client: httpx.AsyncClient, token: SecretStr):
         self.client, self.headers = client, {"Authorization": f"Bearer {token.get_secret_value()}"}
 
-    async def messages(self, page_token: str | None = None) -> dict:
+    async def messages(self, page_token: str | None = None, days: int = 90) -> dict:
         params = {
-            "q": "has:attachment filename:pdf {certificate credential achievement}",
-            "maxResults": 50,
+            "q": f"newer_than:{days}d has:attachment filename:pdf {{certificate credential achievement}}",
+            "maxResults": 10,
         }
         if page_token:
             params["pageToken"] = page_token
         return await safe_json(
             self.client, "GET", self.root + "messages", params=params, headers=self.headers
         )
+
+    async def profile(self) -> dict:
+        return await safe_json(self.client, "GET", self.root + "profile", headers=self.headers)
 
     async def message(self, message_id: str) -> dict:
         return await safe_json(
@@ -237,7 +246,7 @@ class GmailAdapter:
         )
 
     async def history(self, cursor: str, page_token: str | None = None) -> dict:
-        params = {"startHistoryId": cursor, "historyTypes": "messageAdded", "maxResults": 50}
+        params = {"startHistoryId": cursor, "historyTypes": "messageAdded", "maxResults": 10}
         if page_token:
             params["pageToken"] = page_token
         return await safe_json(
@@ -254,6 +263,8 @@ class GmailAdapter:
         async with self.client.stream(
             "GET", url, headers=self.headers, timeout=30, follow_redirects=False
         ) as response:
+            if response.status_code in (429, 500, 502, 503, 504):
+                raise RetryableProviderError("Attachment provider temporarily unavailable")
             if response.status_code != 200:
                 raise ProviderUnavailable("Unable to retrieve attachment")
             parts, observed = [], 0

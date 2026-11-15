@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { AccountAutomation } from "@/components/account-automation";
 
 type LiveCertificate = {
   id: string;
@@ -113,9 +114,9 @@ export default function DevelopmentAccount() {
       <div className="account-banner">
         <ShieldCheck size={20} />
         <p>
-          Development account area · Supabase Auth & private PostgreSQL.
-          Uploads, mailbox imports and AI stay disabled until their security
-          gates pass.
+          Development account area · Supabase Auth & private PostgreSQL. Mailbox
+          automation availability is shown below. AI and manual uploads remain
+          disabled.
         </p>
       </div>
       <div className="page-heading">
@@ -216,6 +217,7 @@ export default function DevelopmentAccount() {
         </div>
       ) : (
         <>
+          <AccountAutomation onImported={refresh} />
           <div className="section-heading">
             <h2>
               Your private certificates{" "}
@@ -266,7 +268,7 @@ export default function DevelopmentAccount() {
               <p>
                 {query
                   ? "No certificates match this search."
-                  : "There are no certificates in this development account. Ingestion is still disabled; no demo certificates are copied here."}
+                  : "No certificates yet. Import availability and setup are shown above; demo certificates are kept separate."}
               </p>
             </div>
           ) : (
@@ -305,6 +307,12 @@ export default function DevelopmentAccount() {
                       </button>
                     </div>
                     <p>{c.issuer || "Issuer needs review"}</p>
+                    <a
+                      className="text-button"
+                      href={`/api/account/pipeline/certificates/${c.id}/download`}
+                    >
+                      Download private PDF
+                    </a>
                     <div className="card-bottom">
                       <span className="tag">{c.category}</span>
                       <span>

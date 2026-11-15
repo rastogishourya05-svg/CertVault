@@ -17,7 +17,16 @@ test("account favorite preserves nullable issuer and searches preserve unsaved p
     const request = route.request();
     const path = new URL(request.url()).pathname;
     let body: unknown = {};
-    if (path.endsWith("/config"))
+    if (path.endsWith("/pipeline/status"))
+      body = {
+        enabled: false,
+        reason: "Mocked configuration: live imports disabled.",
+        connections: [],
+        jobs: [],
+        imports: [],
+        notifications: [],
+      };
+    else if (path.endsWith("/config"))
       body = { configured: true, uploads_enabled: false };
     else if (path.endsWith("/status")) body = { authenticated: false };
     else if (path.endsWith("/login")) body = { authenticated: true };
