@@ -26,7 +26,7 @@ Read `docs/PRD.md`, `docs/ARCHITECTURE.md`, `docs/SECURITY.md`, and `docs/TEST_P
 A feature is done only when it works end-to-end, has tests, proper authorization, accessible responsive UI, empty/loading/error states, and has been verified in a real browser. Never invent test results.
 
 ## Current development checkpoint
-- Runtime currently supports an explicit local demonstration only; preserve loopback restrictions, synthetic-data labels and fail-closed live mode until production gates pass.
+- Runtime stays loopback-only: a synthetic local demo plus the explicitly configured Supabase development account slice at `/account`. Preserve synthetic-data labels, server-only tokens and fail-closed production mode until release gates pass.
 - Use `pnpm` scripts for the web app and `.venv/Scripts/python` on Windows. `pnpm build` uses Webpack because this machine's Turbopack CSS worker fails in production builds.
 - Run API with `--no-access-log` to avoid logging capability URLs. Never put share tokens in analytics or operational logs.
 - Docker services live in `infra/compose.yaml`; the `test` profile is a disposable PostgreSQL database with explicit Supabase-compatible stubs. Passing these tests does not establish hosted Supabase integration.

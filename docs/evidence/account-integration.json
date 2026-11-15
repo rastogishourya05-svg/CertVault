@@ -1,0 +1,10 @@
+{
+  "sign_in": "passed",
+  "opaque_http_only_sessions": "passed",
+  "encrypted_redis": "passed",
+  "cross_user_isolation": "passed",
+  "profile_write": "passed",
+  "refresh": "passed",
+  "direct_storage_upload_denied": "passed",
+  "sign_out_and_replay_denial": "passed"
+}

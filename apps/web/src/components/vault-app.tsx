@@ -275,6 +275,9 @@ export function VaultApp() {
             <p className="fine-print">
               <LockKeyhole size={14} /> Private by default. Always yours.
             </p>
+            <Link className="text-button development-link" href="/account">
+              Development account sign-in <ArrowRight size={14} />
+            </Link>
             {error && (
               <p role="alert" className="error">
                 {error}
@@ -823,7 +826,7 @@ export function VaultApp() {
                         <p>{c.issuer}</p>
                         {(c.tags || []).length > 0 && (
                           <div className="tag-list">
-                            {(c.tags||[]).map((tag) => (
+                            {(c.tags || []).map((tag) => (
                               <span className="tag" key={tag}>
                                 #{tag}
                               </span>

@@ -1,4 +1,60 @@
 @import "tailwindcss";
+.development-link {
+  margin-top: 22px;
+}
+
+.account-page {
+  max-width: 1100px;
+  margin: auto;
+  padding: 40px 25px 60px;
+}
+.account-page > .brand {
+  color: var(--text);
+  padding: 0;
+  margin-bottom: 30px;
+}
+.account-page > .brand > svg {
+  color: var(--primary);
+}
+.account-banner {
+  display: flex;
+  gap: 12px;
+  padding: 15px 18px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--primary-soft);
+  color: #5f7ca4;
+  margin-bottom: 35px;
+  font-size: 12px;
+}
+.account-banner > svg {
+  margin-top: 3px;
+}
+.account-search {
+  max-width: 460px;
+  margin-bottom: 20px;
+}
+.account-search input {
+  width: 100%;
+  font-size: 12px;
+  min-height: 42px;
+}
+.account-preferences {
+  margin-top: 28px;
+  max-width: 560px;
+}
+.account-message {
+  margin: 20px 0;
+  font-size: 13px;
+  color: #44816e;
+}
+.account-page .page-heading {
+  flex-wrap: wrap;
+}
+.account-page .certificate-art {
+  height: 190px;
+  gap: 15px;
+}
 
 :root {
   --background: #f7f9fc;
@@ -2445,4 +2501,15 @@ fieldset label {
 }
 .collection-choice strong {
   font-size: 13px;
+}
+
+.account-page .search-field input {
+  width: 100%;
+  flex: 1;
+  min-width: 0;
+}
+@media (max-width: 600px) {
+  .account-page .certificate-grid {
+    grid-template-columns: 1fr;
+  }
 }

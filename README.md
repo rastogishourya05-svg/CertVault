@@ -1,6 +1,6 @@
 # CertVault
 
-A private certificate vault built with Next.js/TypeScript/Tailwind/shadcn-style Radix components, FastAPI, and Celery/Redis. **Current runtime is a local demonstration, not a production release.** It uses isolated SQLite sessions/private local files and synthetic Gmail/Outlook samples. Do not upload real or untrusted documents.
+A private certificate vault built with Next.js/TypeScript/Tailwind/shadcn-style Radix components, FastAPI, and Celery/Redis. **Current runtime is loopback-only development, not a production release.** The main workspace uses isolated SQLite sessions/private local files and synthetic Gmail/Outlook samples. `/account` provides a separately configured, verified Supabase sign-in/private metadata slice. Do not upload real or untrusted documents.
 
 ## Start locally
 
@@ -56,4 +56,12 @@ E2E automatically starts and waits for app/API servers, or reuses running local 
 - `infra/sql`: disposable PostgreSQL ownership tests and a manual destructive development rollback.
 - `infra`: development Docker services and a non-root API image template. The image fails closed until explicitly configured; it is not ready for production deployment.
 
-See [implementation checkpoint](docs/IMPLEMENTATION_STATUS.md), [integration and deployment runbook](docs/OPERATIONS.md), and the authoritative [PRD](docs/PRD.md). Live Supabase authentication/storage, full OAuth callbacks/orchestration, scanner/OCR, safe link fetching and AI generation remain incomplete. No integrations are represented as live, and nothing has been deployed.
+See [implementation checkpoint](docs/IMPLEMENTATION_STATUS.md), [integration and deployment runbook](docs/OPERATIONS.md), and the authoritative [PRD](docs/PRD.md). Supabase sign-in/out, refresh, private metadata reads/favorites and preference writes have been tested against the approved development project. Registration/reset, document Storage HTTP flows, full OAuth callbacks/orchestration, scanner/OCR, safe link fetching and AI generation remain incomplete. Nothing has been deployed.
+
+## Supabase development account slice
+
+Open `/account` using the “Development account sign-in” link. Configuration is already present on the original development machine in ignored `.local/supabase.json`; its encryption key is never bundled in the web app. On a new machine, set the approved project's `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` securely in the environment, then run `PYTHONPATH=. python scripts/configure-account.py` (PowerShell: `$env:PYTHONPATH='.'` followed by the Python command). This preserves an existing key rather than silently rotating it.
+
+Auth access/refresh tokens stay encrypted in Redis behind an opaque HttpOnly SameSite cookie. Supabase verifies the account on each protected request, while Postgres RLS and explicit owner filters enforce isolation. This is development-only; production requires HTTPS/Secure cookies and managed Redis/secret storage. No service-role key is used by this slice. Uploaded documents and mailbox integrations remain disabled here.
+
+The user-approved live test used two synthetic Auth accounts, then removed them and their fixtures. To repeat it, obtain explicit account-creation/cleanup consent, run `scripts/prepare-account-test.py --approved`, apply its ignored seed SQL only to the approved development database, run `scripts/check-account.py`, and set `CERTVAULT_LIVE_TESTS=1` for the two browser checks. Keep traces disabled for credential-bearing tests. Apply the matching guarded cleanup SQL and remove temporary credential files afterward. Default CI skips these two tests; it still runs mocked account security tests and all eight local journeys.
