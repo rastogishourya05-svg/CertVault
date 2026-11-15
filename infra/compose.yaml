@@ -1,0 +1,25 @@
+services:
+  postgres-test:
+    image: postgres:17-alpine
+    profiles: ["test"]
+    environment:
+      POSTGRES_PASSWORD: local-test-only
+      POSTGRES_DB: certvault_test
+    ports: ["127.0.0.1:54329:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d certvault_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+  redis:
+    image: redis:7.4-alpine
+    ports: ["127.0.0.1:6379:6379"]
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+volumes:
+  redis-data:

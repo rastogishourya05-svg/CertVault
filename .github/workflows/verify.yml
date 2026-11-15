@@ -1,0 +1,49 @@
+name: Verify local product
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      redis:
+        image: redis:7.4-alpine
+        ports: ["6379:6379"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '11.25.0'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pip install -r requirements-dev.txt
+      - run: pnpm install --frozen-lockfile
+      - run: python -m ruff check apps tests scripts
+      - run: python -m ruff format --check apps tests scripts
+      - run: python -m pytest -q
+      - run: PYTHONPATH=. python scripts/export-contracts.py --check
+      - run: pnpm lint && pnpm typecheck && pnpm test && pnpm build
+      - run: mkdir -p .local && PYTHONPATH=. python scripts/check-worker.py
+      - name: PostgreSQL migration and ownership checks
+        run: |
+          docker compose -f infra/compose.yaml --profile test up -d --wait postgres-test
+          docker compose -f infra/compose.yaml exec -T postgres-test psql -U postgres -d certvault_test -v ON_ERROR_STOP=1 < infra/sql/test-bootstrap.sql
+          for migration in supabase/migrations/*.sql; do docker compose -f infra/compose.yaml exec -T postgres-test psql -U postgres -d certvault_test -v ON_ERROR_STOP=1 < "$migration"; done
+          docker compose -f infra/compose.yaml exec -T postgres-test psql -U postgres -d certvault_test -v ON_ERROR_STOP=1 < infra/sql/test-rls.sql
+      - run: pnpm --filter web exec playwright install --with-deps chromium
+      - name: Browser journeys
+        run: pnpm e2e
+      - run: pnpm audit --prod && pip-audit -r requirements.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-evidence
+          path: |
+            docs/evidence
+            apps/web/test-results

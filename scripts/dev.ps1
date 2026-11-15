@@ -1,0 +1,5 @@
+$ErrorActionPreference = 'Stop'
+Write-Host 'Run in two terminals from the repository root:'
+Write-Host '.venv/Scripts/python -m uvicorn apps.api.main:app --host 127.0.0.1 --port 8000 --no-access-log'
+Write-Host 'pnpm dev'
+Write-Host 'Optional Redis: docker compose -f infra/compose.yaml up -d'
