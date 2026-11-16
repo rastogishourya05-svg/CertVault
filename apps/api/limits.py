@@ -4,7 +4,9 @@ from starlette.exceptions import HTTPException
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from apps.api.domain import HARD_CAP
+from apps.api.domain import HARD_CAP, STORAGE_HARD_CAP
+
+UPLOAD_LIMIT_MESSAGE = "Certificate exceeds the 100 MiB local demonstration limit"
 
 
 class BodyLimitMiddleware:
@@ -14,7 +16,13 @@ class BodyLimitMiddleware:
     async def __call__(self, scope: Scope, receive: Receive, send: Send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
-        limit = HARD_CAP + 65536 if scope.get("path") == "/certificates/upload" else 65536
+        path = scope.get("path")
+        if path == "/account/certificates/upload":
+            limit = STORAGE_HARD_CAP + 65536
+        elif path == "/certificates/upload":
+            limit = HARD_CAP + 65536
+        else:
+            limit = 65536
         try:
             declared = int(dict(scope.get("headers", [])).get(b"content-length", b"0"))
         except ValueError:
@@ -22,9 +30,13 @@ class BodyLimitMiddleware:
                 scope, receive, send
             )
         if declared > limit:
-            return await JSONResponse({"detail": "Request exceeds byte limit"}, 413)(
-                scope, receive, send
-            )
+            if path == "/account/certificates/upload":
+                detail = "Certificate exceeds the 50 MB private Storage limit"
+            elif path == "/certificates/upload":
+                detail = UPLOAD_LIMIT_MESSAGE
+            else:
+                detail = "Request exceeds byte limit"
+            return await JSONResponse({"detail": detail}, 413)(scope, receive, send)
         observed = 0
 
         async def bounded_receive():

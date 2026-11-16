@@ -4,6 +4,7 @@ import Link from "next/link";
 import {
   ArrowLeft,
   Award,
+  Eye,
   LockKeyhole,
   Search,
   ShieldCheck,
@@ -27,7 +28,9 @@ type Profile = { display_name: string; download_limit_bytes: number };
 export default function DevelopmentAccount() {
   const [checking, setChecking] = useState(true),
     [configured, setConfigured] = useState(false),
+    [uploadsEnabled, setUploadsEnabled] = useState(false),
     [authenticated, setAuthenticated] = useState(false),
+    [creatingAccount, setCreatingAccount] = useState(false),
     [busy, setBusy] = useState(false),
     [loadingVault, setLoadingVault] = useState(true),
     [error, setError] = useState(""),
@@ -35,6 +38,7 @@ export default function DevelopmentAccount() {
   const [email, setEmail] = useState(""),
     [password, setPassword] = useState(""),
     [query, setQuery] = useState(""),
+    [sourceFilter, setSourceFilter] = useState("all"),
     [certs, setCerts] = useState<LiveCertificate[]>([]),
     [profile, setProfile] = useState<Profile>({
       display_name: "Your workspace",
@@ -50,9 +54,10 @@ export default function DevelopmentAccount() {
     [query],
   );
   useEffect(() => {
-    api<{ configured: boolean }>("/account/config")
+    api<{ configured: boolean; uploads_enabled: boolean }>("/account/config")
       .then(async (c) => {
         setConfigured(c.configured);
+        setUploadsEnabled(c.uploads_enabled);
         if (c.configured) {
           const s = await api<{ authenticated: boolean }>("/account/status");
           setAuthenticated(s.authenticated);
@@ -105,6 +110,10 @@ export default function DevelopmentAccount() {
       setBusy(false);
     }
   }
+  const visibleCertificates = certs.filter(
+    (certificate) =>
+      sourceFilter === "all" || certificate.source === sourceFilter,
+  );
   return (
     <main className="account-page">
       <Link className="brand" href="/">
@@ -114,9 +123,8 @@ export default function DevelopmentAccount() {
       <div className="account-banner">
         <ShieldCheck size={20} />
         <p>
-          Development account area · Supabase Auth & private PostgreSQL. Mailbox
-          automation availability is shown below. AI and manual uploads remain
-          disabled.
+          Local hackathon workspace · Supabase Auth, PostgreSQL and private
+          certificate storage. Gmail scanning is always manual.
         </p>
       </div>
       <div className="page-heading">
@@ -166,9 +174,20 @@ export default function DevelopmentAccount() {
               onSubmit={(e) => {
                 e.preventDefault();
                 action(async () => {
-                  await api("/account/login", "POST", { email, password });
+                  const result = await api<{
+                    authenticated: boolean;
+                    confirmation_required?: boolean;
+                  }>(
+                    creatingAccount ? "/account/register" : "/account/login",
+                    "POST",
+                    { email, password },
+                  );
                   setPassword("");
-                  setAuthenticated(true);
+                  if (result.authenticated) setAuthenticated(true);
+                  else
+                    setMessage(
+                      "Account created. Check local Auth mail in Supabase Inbucket, then sign in.",
+                    );
                 });
               }}
             >
@@ -187,15 +206,31 @@ export default function DevelopmentAccount() {
                 <input
                   required
                   type="password"
-                  autoComplete="current-password"
+                  autoComplete={creatingAccount ? "new-password" : "current-password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
               </label>
               <Button disabled={busy}>
-                {busy ? "Signing in…" : "Sign in securely"}
+                {busy
+                  ? creatingAccount
+                    ? "Creating account…"
+                    : "Signing in…"
+                  : creatingAccount
+                    ? "Create local account"
+                    : "Sign in securely"}
               </Button>
             </form>
+            <button
+              className="text-button"
+              type="button"
+              disabled={busy}
+              onClick={() => setCreatingAccount((value) => !value)}
+            >
+              {creatingAccount
+                ? "Already have an account? Sign in"
+                : "New to the local demo? Create an account"}
+            </button>
             <p className="fine-print">
               <LockKeyhole size={14} />
               Your access and refresh tokens stay server-side.
@@ -204,10 +239,10 @@ export default function DevelopmentAccount() {
           <section className="panel">
             <h2>A focused development slice</h2>
             <p className="muted">
-              Sign-in, sign-out, private certificate search, favorites and
-              profile preferences use Supabase authorization. Registration,
-              password recovery, uploads and mail sync are still being
-              integrated; they are not represented as ready.
+              Create a local account, sign in, search and favorite certificates,
+              and save profile preferences. Private PDF upload is available once
+              local scanning and Storage configuration are present. Gmail scans
+              require a separate manual consent step.
             </p>
             <p className="muted">
               Never paste passwords or API secrets into chat. Enter account
@@ -220,7 +255,7 @@ export default function DevelopmentAccount() {
           <AccountAutomation onImported={refresh} />
           <div className="section-heading">
             <h2>
-              Your private certificates{" "}
+              <span id="private-vault">Your private certificates</span>{" "}
               <span className="number-pill">{certs.length}</span>
             </h2>
             <Button
@@ -255,11 +290,23 @@ export default function DevelopmentAccount() {
               onChange={(e) => setQuery(e.target.value)}
             />
           </label>
+          <label className="account-source-filter">
+            Filter by source
+            <select
+              aria-label="Filter certificates by source"
+              value={sourceFilter}
+              onChange={(event) => setSourceFilter(event.target.value)}
+            >
+              <option value="all">All certificates</option>
+              <option value="gmail">Gmail imports</option>
+              <option value="manual">Manual uploads</option>
+            </select>
+          </label>
           {loadingVault ? (
             <div className="empty-state" role="status">
               Loading your private certificates…
             </div>
-          ) : certs.length === 0 ? (
+          ) : visibleCertificates.length === 0 ? (
             <div className="empty-state">
               <div className="empty-icon">
                 <Award size={30} />
@@ -273,7 +320,7 @@ export default function DevelopmentAccount() {
             </div>
           ) : (
             <div className="certificate-grid">
-              {certs.map((c) => (
+              {visibleCertificates.map((c) => (
                 <article key={c.id} className="certificate-card">
                   <div className="certificate-art blue">
                     <Award size={36} />
@@ -309,6 +356,14 @@ export default function DevelopmentAccount() {
                     <p>{c.issuer || "Issuer needs review"}</p>
                     <a
                       className="text-button"
+                      target="_blank"
+                      rel="noreferrer"
+                      href={`/api/account/pipeline/certificates/${c.id}/download?inline=true`}
+                    >
+                      <Eye size={14} /> View PDF
+                    </a>
+                    <a
+                      className="text-button"
                       href={`/api/account/pipeline/certificates/${c.id}/download`}
                     >
                       Download private PDF
@@ -324,6 +379,44 @@ export default function DevelopmentAccount() {
                 </article>
               ))}
             </div>
+          )}
+          {uploadsEnabled && (
+            <section className="panel account-upload">
+              <h2>Add a certificate PDF</h2>
+              <p className="muted">
+                Files are size-checked, scanned, processed in an isolated parser,
+                and stored privately before appearing in your vault.
+              </p>
+              <label>
+                PDF certificate
+                <input
+                  aria-label="Certificate PDF to upload"
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  disabled={busy}
+                  onChange={(event) => {
+                    const input = event.currentTarget;
+                    const selected = input.files?.[0];
+                    if (!selected) return;
+                    const form = new FormData();
+                    form.append("file", selected);
+                    action(async () => {
+                      const result = await api<{
+                        status: string;
+                        certificate_id: string;
+                      }>("/account/certificates/upload", "POST", form);
+                      setMessage(
+                        result.status === "duplicate"
+                          ? "This certificate is already in your vault; the duplicate was skipped."
+                          : "Certificate uploaded and saved privately.",
+                      );
+                      await refresh();
+                      input.value = "";
+                    });
+                  }}
+                />
+              </label>
+            </section>
           )}
           <section className="panel account-preferences">
             <h2>Profile preferences</h2>
@@ -365,6 +458,11 @@ export default function DevelopmentAccount() {
                   }
                 />
               </label>
+              <p className="muted">
+                This preference stays configurable. The current Supabase Free
+                Storage limit is 50 MB (50,000,000 bytes); larger files are
+                blocked even if you approve them.
+              </p>
               <Button disabled={busy}>Save development preferences</Button>
             </form>
           </section>

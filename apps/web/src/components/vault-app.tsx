@@ -84,7 +84,7 @@ const grow = [
 const emptySettings: Settings = {
   threshold_mib: 50,
   name: "Demo learner",
-  hard_cap_mib: 100,
+  hard_cap_bytes: 100 * 1024 * 1024,
 };
 
 export function VaultApp() {
@@ -1061,7 +1061,8 @@ export function VaultApp() {
                   <strong>Your permission comes first</strong>
                   <p>
                     Files over {settings.threshold_mib} MiB wait here. Approval
-                    applies to one file. The 100 MiB hard cap always applies.
+                    applies to one file. The local demonstration has a 100 MiB
+                    cap; real Supabase ingestion is limited to 50 MB.
                   </p>
                 </div>
               </div>
@@ -1186,7 +1187,8 @@ export function VaultApp() {
                   </label>
                   <p className="muted">
                     Default 50 MiB. Files above this require per-file approval.
-                    Administrative hard cap: 100 MiB.
+                    Local demonstration cap: 100 MiB. Real Supabase ingestion
+                    cap: 50 MB (50,000,000 bytes).
                   </p>
                   <Button disabled={busy} type="submit">
                     Save preferences

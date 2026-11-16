@@ -48,13 +48,14 @@ def account(client):
     state = {
         "expired": False,
         "invalid_login": False,
+        "signup_confirmation": False,
         "profile": [],
         "certs": [],
         "reject_patch": False,
         "rest_error": None,
     }
     settings = AccountConfig(
-        url="https://abcdefghijklmnopqrst.supabase.co",
+        url="http://127.0.0.1:54321",
         publishable_key="publishable-test",
         session_key=Fernet.generate_key().decode(),
         enabled=True,
@@ -76,6 +77,18 @@ def account(client):
                     "access_token": "private-access-token",
                     "refresh_token": "private-refresh-token",
                     "expires_in": 3600,
+                },
+            )
+        if path.endswith("/signup"):
+            if state["signup_confirmation"]:
+                return httpx.Response(200, json={"user": {"id": OWNER}})
+            return httpx.Response(
+                200,
+                json={
+                    "access_token": "private-access-token",
+                    "refresh_token": "private-refresh-token",
+                    "expires_in": 3600,
+                    "user": {"id": OWNER},
                 },
             )
         if path.endswith("/user"):
@@ -134,6 +147,19 @@ def test_pipeline_is_disabled_and_never_authorizes_without_configuration(account
     assert all("google" not in str(r.url) for r in requests)
 
 
+def test_account_config_allows_only_supabase_https_or_local_loopback():
+    common = {
+        "publishable_key": "test-key",
+        "session_key": Fernet.generate_key().decode(),
+        "enabled": True,
+    }
+    assert AccountConfig(url="http://127.0.0.1:54321", **common)
+    with pytest.raises(ValueError):
+        AccountConfig(url="http://192.168.1.5:54321", **common)
+    with pytest.raises(ValueError):
+        AccountConfig(url="http://localhost:54321", **common)
+
+
 def test_pipeline_oauth_pkce_session_binding_and_single_use(account, monkeypatch):
     from urllib.parse import parse_qs, urlsplit
 
@@ -143,8 +169,7 @@ def test_pipeline_oauth_pkce_session_binding_and_single_use(account, monkeypatch
 
     client, sessions, _, _, _ = account
     config = PipelineConfig(
-        database_url="postgresql://unused",
-        storage_key="mock-key",
+        database_url="postgresql://postgres@127.0.0.1:54322/postgres",
         oauth_key=Fernet.generate_key().decode(),
         google_client_id="mock-client",
         google_client_secret="mock-secret",
@@ -200,8 +225,7 @@ def test_pipeline_oauth_requires_callback_binding(account, monkeypatch):
 
     client, _, requests, _, _ = account
     config = PipelineConfig(
-        database_url="postgresql://unused",
-        storage_key="mock-key",
+        database_url="postgresql://postgres@127.0.0.1:54322/postgres",
         oauth_key=Fernet.generate_key().decode(),
         google_client_id="mock-client",
         google_client_secret="mock-secret",
@@ -250,6 +274,29 @@ def test_session_refresh_and_revocation(account):
     assert not client.get("/account/status").json()["authenticated"]
     assert key not in sessions.values
     assert client.get("/account/certificates").status_code == 401
+
+
+def test_local_registration_creates_opaque_server_session(account):
+    client, _, _, _, _ = account
+    result = client.post(
+        "/account/register",
+        json={"email": "new-learner@example.test", "password": "a-test-password"},
+    )
+    assert result.status_code == 201
+    assert result.json()["authenticated"] is True
+    assert "HttpOnly" in result.headers["set-cookie"]
+    assert client.get("/account/status").json()["authenticated"]
+
+
+def test_local_registration_reports_confirmation_without_exposing_provider_data(account):
+    client, _, _, state, _ = account
+    state["signup_confirmation"] = True
+    result = client.post(
+        "/account/register",
+        json={"email": "new-learner@example.test", "password": "a-test-password"},
+    )
+    assert result.status_code == 201
+    assert result.json() == {"authenticated": False, "confirmation_required": True}
 
 
 def test_profile_and_search_use_authenticated_owner(account):

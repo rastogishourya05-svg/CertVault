@@ -13,11 +13,12 @@ from cryptography.fernet import InvalidToken
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from redis.exceptions import RedisError
 
 from apps.api.account import COOKIE, Gateway, gateway
-from apps.api.domain import HARD_CAP, digest
+from apps.api.domain import STORAGE_HARD_CAP as HARD_CAP
+from apps.api.domain import digest
 from apps.api.pipeline_config import load_pipeline
 from apps.api.pipeline_store import PipelineStore
 from apps.api.postgres import DatabaseError
@@ -26,14 +27,21 @@ from apps.api.providers import GmailAdapter, ProviderUnavailable, TokenCipher, e
 router = APIRouter(prefix="/account/pipeline", tags=["Authenticated ingestion"])
 
 
-def settings():
+def configured_settings():
     try:
         value = load_pipeline()
     except (ValueError, OSError):
         raise HTTPException(
             503, "Pipeline configuration is invalid; contact the developer"
         ) from None
-    if not value or not value.live_imports_enabled:
+    if not value:
+        raise HTTPException(503, "Local pipeline configuration is required")
+    return value
+
+
+def settings():
+    value = configured_settings()
+    if not value.live_imports_enabled:
         raise HTTPException(
             503, "Live imports are disabled pending configuration and security verification"
         )
@@ -44,6 +52,26 @@ async def context(request: Request, g: Gateway = Depends(gateway)):
     sid, owner, token = await g.identity(request)
     value = settings()
     return value, PipelineStore(value.database_url.get_secret_value(), owner), g, token, sid
+
+
+async def dispatch_manual_job(g, owner, job, access_token):
+    """Give one manually queued worker job a short-lived encrypted user JWT.
+
+    The Celery payload contains identifiers only. The token exists in Redis for
+    at most one hour and is encrypted with the server-side account session key.
+    """
+    key = f"cv:ingestion-session:{owner}:{job}"
+    try:
+        await g.sessions.setex(key, 3600, g.cipher.encrypt(access_token.encode()))
+        from apps.worker.celery_app import ingest_mailbox
+
+        ingest_mailbox.apply_async(args=[str(owner), str(job)], queue="ingestion")
+    except Exception:
+        try:
+            await g.sessions.delete(key)
+        except RedisError:
+            pass
+        raise HTTPException(503, "The import worker is unavailable. Please retry.") from None
 
 
 async def throttle(g, owner, kind):
@@ -63,6 +91,13 @@ class ConnectMailbox(BaseModel):
     consent: bool
     scan_days: int = Field(default=30, ge=1, le=365)
     automatic: bool = False
+
+    @field_validator("automatic")
+    @classmethod
+    def mvp_is_manual_only(cls, value):
+        if value:
+            raise ValueError("Automatic scans are disabled in the hackathon MVP")
+        return False
 
 
 class ImportDecision(BaseModel):
@@ -224,24 +259,25 @@ async def callback(
 
 @router.post("/connections/{key}/scan")
 async def enqueue(key: uuid.UUID, ctx=Depends(context)):
-    _, store, g, _, _ = ctx
+    _, store, g, token, _ = ctx
     await throttle(g, store.owner, "scan")
     try:
-        job = store.enqueue(key)
+        job = store.enqueue(key, rescan=True)
     except ValueError:
         raise HTTPException(404, "Connected mailbox not found") from None
-    # Durable database queue is the outbox; Beat dispatches it even after broker downtime.
+    await dispatch_manual_job(g, store.owner, job, token)
     return {"job_id": job, "status": "queued"}
 
 
 @router.post("/imports/{key}/decision")
-def decision(key: uuid.UUID, body: ImportDecision, ctx=Depends(context)):
-    _, store, _, _, _ = ctx
+async def decision(key: uuid.UUID, body: ImportDecision, ctx=Depends(context)):
+    _, store, g, token, _ = ctx
     row = store.decide(key, body.approve)
     if not row:
         raise HTTPException(409, "Approval item not found or already decided")
     if body.approve:
-        store.enqueue(row["connection_id"])
+        job = store.enqueue(row["connection_id"])
+        await dispatch_manual_job(g, store.owner, job, token)
     return {"ok": True}
 
 
@@ -271,14 +307,21 @@ async def disconnect(key: uuid.UUID, ctx=Depends(context)):
 
 
 @router.get("/certificates/{key}/download")
-async def download(key: uuid.UUID, ctx=Depends(context)):
-    _, store, g, token, _ = ctx
+async def download(
+    key: uuid.UUID,
+    request: Request,
+    inline: bool = Query(default=False),
+    g: Gateway = Depends(gateway),
+):
+    config = configured_settings()
+    _, owner, token = await g.identity(request)
+    store = PipelineStore(config.database_url.get_secret_value(), owner)
     with store.db() as db:
         row = db.execute(
             "select f.object_path,f.bytes,f.sha256 from public.certificate_files f join public.certificates c on c.id=f.certificate_id and c.owner_id=f.owner_id where c.id=%s and c.owner_id=%s and c.trashed_at is null",
-            (key, store.owner),
+            (key, owner),
         ).fetchone()
-    if not row or not row["object_path"].startswith(store.owner + "/"):
+    if not row or not row["object_path"].startswith(owner + "/"):
         raise HTTPException(404, "Certificate not found")
     # Download with user's JWT, so Storage RLS independently enforces ownership.
     # Context has already verified Auth; acquire its token without sending it to the browser.
@@ -307,5 +350,8 @@ async def download(key: uuid.UUID, ctx=Depends(context)):
     return Response(
         bytes(data),
         media_type="application/pdf",
-        headers={"Content-Disposition": 'attachment; filename="certificate.pdf"'},
+        headers={
+            "Content-Disposition": f'{"inline" if inline else "attachment"}; filename="certificate.pdf"',
+            "X-Content-Type-Options": "nosniff",
+        },
     )

@@ -20,15 +20,15 @@ def sample_pdf(title: str, issuer: str) -> bytes:
     return output
 
 
-def extract_pdf(data: bytes) -> str:
+def extract_pdf(data: bytes, *, ocr=False) -> str:
     if not data.startswith(b"%PDF-"):
         raise PolicyError("Only PDF content is accepted in this milestone")
     try:
         with pymupdf.open(stream=data, filetype="pdf") as doc:
             if doc.is_encrypted or not 1 <= len(doc) <= 100:
                 raise PolicyError("Encrypted or over-100-page PDFs require manual review")
-            if doc.embfile_count() or doc.get_xml_metadata():
-                raise PolicyError("Embedded files or XML metadata require manual review")
+            if doc.embfile_count():
+                raise PolicyError("Embedded files require manual review")
             # Reject active actions before exposing a preview/download.
             for xref in range(1, doc.xref_length()):
                 obj = doc.xref_object(xref)
@@ -36,7 +36,19 @@ def extract_pdf(data: bytes) -> str:
                     key in obj for key in ("/JavaScript", "/Launch", "/OpenAction", "/RichMedia")
                 ):
                     raise PolicyError("Active PDF content is unsupported")
-            text = "\n".join(page.get_text()[:10000] for page in doc)[:50000]
+            texts = []
+            ocr_pages = 0
+            for page in doc:
+                page_text = page.get_text()[:10000]
+                if ocr and len(page_text.strip()) < 30:
+                    ocr_pages += 1
+                    if ocr_pages > 3:
+                        raise PolicyError("OCR page limit exceeded; manual review required")
+                    page_text = page.get_text(
+                        textpage=page.get_textpage_ocr(language="eng", dpi=150, full=True)
+                    )[:10000]
+                texts.append(page_text)
+            text = "\n".join(texts)[:50000]
             if not text.strip():
                 raise PolicyError("Scanned PDF needs OCR; local OCR is not configured")
             return text

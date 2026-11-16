@@ -1,12 +1,21 @@
 """One resumable mailbox page per job invocation; no tokens/content in task messages."""
 
 import asyncio
+import base64
 import hashlib
+import json
 from datetime import UTC, datetime, timedelta
 
 import httpx
 
-from apps.api.domain import HARD_CAP, PolicyError, likely_certificate
+from apps.api.domain import (
+    STORAGE_HARD_CAP as HARD_CAP,
+)
+from apps.api.domain import (
+    HardLimitExceeded,
+    PolicyError,
+    likely_certificate,
+)
 from apps.api.pipeline_security import ScannerUnavailable, isolated_extract, scan
 from apps.api.providers import (
     GmailAdapter,
@@ -18,24 +27,72 @@ from apps.api.providers import (
 
 
 class PrivateStorage:
-    def __init__(self, client, url, secret):
+    def __init__(self, client, url, publishable_key, user_token):
         self.client, self.url = client, url
-        self.headers = {"apikey": secret, "Authorization": "Bearer " + secret}
+        if not self._is_publishable_key(publishable_key):
+            raise ValueError("Private Storage requires a publishable key, never a project secret")
+        if not user_token or len(user_token) > 8192:
+            raise ValueError("An authenticated owner session is required for Storage")
+        self.headers = {
+            "apikey": publishable_key,
+            "Authorization": "Bearer " + user_token,
+        }
+
+    @staticmethod
+    def _is_publishable_key(value):
+        if value.startswith(("sb_publishable_", "mock-")):
+            return True
+        # Local Supabase still supplies a legacy JWT anon key. Inspect only its
+        # public role claim; never accept service_role or other privileged keys.
+        try:
+            payload = value.split(".")[1]
+            payload += "=" * (-len(payload) % 4)
+            claims = json.loads(base64.urlsafe_b64decode(payload))
+            return claims.get("role") == "anon"
+        except (IndexError, ValueError, TypeError):
+            return False
 
     async def upload(self, owner, data):
+        enforce_storage_limit(data)
         path = owner + "/" + hashlib.sha256(data).hexdigest() + ".pdf"
         try:
             response = await self.client.post(
                 self.url + "/storage/v1/object/certificates/" + path,
-                headers={**self.headers, "Content-Type": "application/pdf", "x-upsert": "true"},
+                headers={**self.headers, "Content-Type": "application/pdf", "x-upsert": "false"},
                 content=data,
                 timeout=45,
                 follow_redirects=False,
             )
         except httpx.RequestError as exc:
             raise ScannerUnavailable("Private storage unavailable") from exc
-        if response.status_code not in (200, 201):
+        message = response.text[:2048].lower() if response.status_code == 400 else ""
+        if response.status_code == 413 or (
+            response.status_code == 400
+            and any(
+                marker in message
+                for marker in (
+                    "payload too large",
+                    "entity too large",
+                    "maximum file size",
+                    "file size limit",
+                    "maximum allowed size",
+                )
+            )
+        ):
+            raise StorageLimitExceeded
+        # The key is the SHA-256 of the bytes, so a conflict means a prior
+        # attempt already stored this exact content. No overwrite is permitted.
+        if response.status_code not in (200, 201, 409):
             raise ScannerUnavailable("Private storage upload was not confirmed")
+
+
+class StorageLimitExceeded(RuntimeError):
+    """Storage rejected an object because it exceeds the configured hard limit."""
+
+
+def enforce_storage_limit(data):
+    if len(data) > HARD_CAP:
+        raise StorageLimitExceeded
 
 
 def parts(payload):
@@ -79,12 +136,18 @@ async def process_item(
     active = store.connection(connection["id"])
     if not active or active["state"] != "connected":
         return
+    if item.get("declared_bytes") is not None and item["declared_bytes"] > HARD_CAP:
+        store.item_state(item["id"], "rejected", "storage_size_limit_exceeded")
+        return
     approved = item["approved"]
     store.item_state(item["id"], "downloading")
     try:
         data = await adapter.attachment(
             item["message_id"], item["attachment_id"], threshold, approved
         )
+    except HardLimitExceeded:
+        store.item_state(item["id"], "rejected", "storage_size_limit_exceeded")
+        return
     except PolicyError:
         store.item_state(
             item["id"],
@@ -94,6 +157,11 @@ async def process_item(
         return
     if not data or len(data) > HARD_CAP or not data.startswith(b"%PDF-"):
         store.item_state(item["id"], "needs_review", "unsupported_content")
+        return
+    if store.find_certificate_hash(data):
+        # Identical bytes already passed validation and belong to this owner.
+        # Record this source as a duplicate without rescanning/reuploading it.
+        store.complete(item, data, "")
         return
     store.item_state(item["id"], "scanning")
     try:
@@ -113,7 +181,13 @@ async def process_item(
     # At this point only validated, scanned bytes can leave quarantine for Storage.
     if not store.connection(connection["id"]):
         return
-    await storage.upload(store.owner, data)
+    try:
+        path = store.owner + "/" + hashlib.sha256(data).hexdigest() + ".pdf"
+        store.issue_storage_upload(path)
+        await storage.upload(store.owner, data)
+    except StorageLimitExceeded:
+        store.item_state(item["id"], "rejected", "storage_size_limit_exceeded")
+        return
     store.complete(item, data, text)
 
 
@@ -123,7 +197,8 @@ async def run_page(config, store, job_id, http, storage, *, scan_file=None, pars
     # Session advisory lock covers provider requests without holding row locks/transactions.
     with store.db() as lock:
         row = lock.execute(
-            "select * from public.sync_jobs where id=%s and owner_id=%s", (job_id, store.owner)
+            "select id,owner_id,connection_id,status from public.sync_jobs where id=%s and owner_id=%s",
+            (job_id, store.owner),
         ).fetchone()
         if not row or row["status"] in ("completed", "cancelled", "failed"):
             return

@@ -1,9 +1,11 @@
 """Transactional ingestion repository, always running as a non-bypass RLS role."""
 
 import hashlib
+import json
 import uuid
 from contextlib import contextmanager
 
+from apps.api.metadata import extract_metadata
 from apps.api.postgres import connect
 
 
@@ -22,7 +24,7 @@ class PipelineStore:
     def connection(self, key):
         with self.db() as db:
             return db.execute(
-                "select c.*,m.ciphertext,m.expires_at,m.scan_days,m.automatic "
+                "select c.id,c.owner_id,c.cursor,c.state,m.ciphertext,m.expires_at,m.scan_days,m.automatic "
                 "from public.email_connections c join private.mailbox_tokens m "
                 "on m.connection_id=c.id and m.owner_id=c.owner_id where c.id=%s and c.owner_id=%s",
                 (key, self.owner),
@@ -59,7 +61,7 @@ class PipelineStore:
             (self.owner, key, kind, message),
         )
 
-    def enqueue(self, connection):
+    def enqueue(self, connection, *, rescan=False):
         with self.db() as db:
             # Serialize enqueue per connection; there is at most one outstanding job.
             row = db.execute(
@@ -73,11 +75,30 @@ class PipelineStore:
                 (self.owner, connection),
             ).fetchone()
             if not job:
+                if rescan:
+                    db.execute(
+                        "update private.pipeline_items set status='eligible',safe_error=null,updated_at=now() "
+                        "where connection_id=%s and owner_id=%s and status='needs_review' "
+                        "and safe_error='document_rejected_or_ocr_required'",
+                        (connection, self.owner),
+                    )
+                    db.execute(
+                        "update public.email_connections set cursor=null where id=%s and owner_id=%s",
+                        (connection, self.owner),
+                    )
                 job = db.execute(
                     "insert into public.sync_jobs(owner_id,connection_id,idempotency_key) values(%s,%s,%s) returning id",
                     (self.owner, connection, str(uuid.uuid4())),
                 ).fetchone()
             return str(job["id"])
+
+    def job_status(self, key):
+        with self.db() as db:
+            row = db.execute(
+                "select status from public.sync_jobs where id=%s and owner_id=%s",
+                (key, self.owner),
+            ).fetchone()
+            return row["status"] if row else None
 
     def snapshot(self):
         with self.db() as db:
@@ -130,16 +151,40 @@ class PipelineStore:
             self.event(db, "mailbox_disconnected", connection)
             return True
 
-    def discover(self, connection, message, attachment, filename, size, threshold):
-        from apps.api.domain import size_decision
+    def issue_storage_upload(self, object_path):
+        """Mint a one-use Storage insert ticket after the file passed scanning."""
+        if not object_path.startswith(self.owner + "/") or len(object_path) > 220:
+            raise ValueError("Storage path is not owner-scoped")
+        with self.db() as db:
+            db.execute("delete from private.storage_upload_tickets where expires_at < now()")
+            db.execute(
+                "insert into private.storage_upload_tickets(owner_id,object_path,expires_at) "
+                "values(%s,%s,now()+interval '3 minutes') "
+                "on conflict(owner_id,object_path) do update set "
+                "expires_at=excluded.expires_at,consumed_at=null",
+                (self.owner, object_path),
+            )
 
-        status = size_decision(size, threshold)
+    def discover(self, connection, message, attachment, filename, size, threshold):
+        from apps.api.domain import STORAGE_HARD_CAP, size_decision
+
+        status = size_decision(size, threshold, hard_cap=STORAGE_HARD_CAP)
+        safe_error = "storage_size_limit_exceeded" if status == "rejected" else None
         with self.db() as db:
             row = db.execute(
-                "insert into private.pipeline_items(owner_id,connection_id,message_id,attachment_id,filename,declared_bytes,status) "
-                "values(%s,%s,%s,%s,%s,%s,%s) on conflict(owner_id,connection_id,message_id,attachment_id) "
+                "insert into private.pipeline_items(owner_id,connection_id,message_id,attachment_id,filename,declared_bytes,status,safe_error) "
+                "values(%s,%s,%s,%s,%s,%s,%s,%s) on conflict(owner_id,connection_id,message_id,attachment_id) "
                 "do update set filename=private.pipeline_items.filename returning *",
-                (self.owner, connection, message, attachment, filename[:160], size, status),
+                (
+                    self.owner,
+                    connection,
+                    message,
+                    attachment,
+                    filename[:160],
+                    size,
+                    status,
+                    safe_error,
+                ),
             ).fetchone()
             if row["status"] == "awaiting_approval":
                 self.notify(
@@ -147,6 +192,13 @@ class PipelineStore:
                     "approval:" + str(row["id"]),
                     "approval",
                     "A certificate exceeds your download limit and needs approval.",
+                )
+            elif row["status"] == "rejected" and row["safe_error"] == "storage_size_limit_exceeded":
+                self.notify(
+                    db,
+                    "size_limit:" + str(row["id"]),
+                    "error",
+                    "A certificate exceeds the 50 MB Storage limit. It was not downloaded and cannot be approved.",
                 )
             return row
 
@@ -156,7 +208,14 @@ class PipelineStore:
                 "update private.pipeline_items set status=%s,safe_error=%s,updated_at=now() where id=%s and owner_id=%s",
                 (status, error, key, self.owner),
             )
-            if status in ("needs_review", "failed", "awaiting_approval"):
+            if status == "rejected" and error == "storage_size_limit_exceeded":
+                self.notify(
+                    db,
+                    "size_limit:" + str(key),
+                    "error",
+                    "A certificate exceeds the 50 MB Storage limit. It was not saved and cannot be approved.",
+                )
+            elif status in ("needs_review", "failed", "awaiting_approval"):
                 self.notify(
                     db,
                     status + ":" + str(key),
@@ -185,18 +244,20 @@ class PipelineStore:
                 key, status = existing["certificate_id"], "duplicate"
             else:
                 key, status = uuid.uuid4(), "stored"
-                title = (
-                    item["filename"].removesuffix(".pdf").removesuffix(".PDF")[:160]
-                    or "Certificate needs review"
-                )
+                metadata = extract_metadata(text, item["filename"])
                 db.execute(
-                    "insert into public.certificates(id,owner_id,title,source,extracted_text,provenance) values(%s,%s,%s,'gmail',%s,%s::jsonb)",
+                    "insert into public.certificates(id,owner_id,title,issuer,recipient,issued_on,category,source,extracted_text,provenance) "
+                    "values(%s,%s,%s,%s,%s,%s,%s,'gmail',%s,%s::jsonb)",
                     (
                         key,
                         self.owner,
-                        title,
+                        metadata["title"],
+                        metadata["issuer"],
+                        metadata["recipient"],
+                        metadata["issued_on"],
+                        metadata["category"],
                         text,
-                        '{"title":"attachment filename; needs review","extracted_text":"isolated PDF text; not authenticity verification"}',
+                        json.dumps(metadata["provenance"]),
                     ),
                 )
                 db.execute(
@@ -217,3 +278,57 @@ class PipelineStore:
             )
             self.event(db, "certificate_" + status, key)
             return str(key)
+
+    def find_certificate_hash(self, data):
+        digest = hashlib.sha256(data).hexdigest()
+        with self.db() as db:
+            return db.execute(
+                "select certificate_id from public.certificate_files where owner_id=%s and sha256=%s",
+                (self.owner, digest),
+            ).fetchone()
+
+    def complete_manual(self, filename, data, text):
+        digest = hashlib.sha256(data).hexdigest()
+        with self.db() as db:
+            db.execute(
+                "select pg_advisory_xact_lock(hashtextextended(%s,0))", (self.owner + digest,)
+            )
+            existing = db.execute(
+                "select certificate_id from public.certificate_files where owner_id=%s and sha256=%s",
+                (self.owner, digest),
+            ).fetchone()
+            if existing:
+                key, status = existing["certificate_id"], "duplicate"
+            else:
+                key, status = uuid.uuid4(), "stored"
+                metadata = extract_metadata(text, filename)
+                db.execute(
+                    "insert into public.certificates(id,owner_id,title,issuer,recipient,issued_on,category,source,extracted_text,provenance) "
+                    "values(%s,%s,%s,%s,%s,%s,%s,'manual',%s,%s::jsonb)",
+                    (
+                        key,
+                        self.owner,
+                        metadata["title"],
+                        metadata["issuer"],
+                        metadata["recipient"],
+                        metadata["issued_on"],
+                        metadata["category"],
+                        text,
+                        json.dumps(metadata["provenance"]),
+                    ),
+                )
+                db.execute(
+                    "insert into public.certificate_files(owner_id,certificate_id,object_path,sha256,mime,bytes,scanned_at) "
+                    "values(%s,%s,%s,%s,'application/pdf',%s,now())",
+                    (self.owner, key, self.owner + "/" + digest + ".pdf", digest, len(data)),
+                )
+            self.notify(
+                db,
+                status + ":" + str(key),
+                status,
+                "A certificate was added to your private vault. Review the extracted details."
+                if status == "stored"
+                else "This certificate was already in your vault; the duplicate was skipped.",
+            )
+            self.event(db, "certificate_" + status, key)
+            return {"certificate_id": str(key), "status": status}

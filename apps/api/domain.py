@@ -6,29 +6,51 @@ from collections.abc import Iterable
 from urllib.parse import urlsplit
 
 MIB = 1024 * 1024
+MB = 1_000_000
+MAX_AUTO_THRESHOLD = 100 * MIB
 HARD_CAP = 100 * MIB
+STORAGE_HARD_CAP = 50 * MB
 
 
 class PolicyError(ValueError):
     pass
 
 
-def size_decision(size: int | None, threshold: int, approved: bool = False) -> str:
-    if not 1 <= threshold <= HARD_CAP:
+class HardLimitExceeded(PolicyError):
+    """Observed content crossed the non-approvable hard byte ceiling."""
+
+
+def size_decision(
+    size: int | None, threshold: int, approved: bool = False, *, hard_cap: int = HARD_CAP
+) -> str:
+    if not 1 <= threshold <= MAX_AUTO_THRESHOLD:
         raise PolicyError("Invalid download threshold")
-    if size is not None and (size < 0 or size > HARD_CAP):
+    if size is not None and size < 0:
+        return "rejected"
+    if size is not None and size > hard_cap:
         return "rejected"
     if size is not None and size > threshold and not approved:
         return "awaiting_approval"
     return "eligible"
 
 
-def bounded_bytes(chunks: Iterable[bytes], threshold: int, approved: bool = False) -> bytes:
+def bounded_bytes(
+    chunks: Iterable[bytes],
+    threshold: int,
+    approved: bool = False,
+    *,
+    hard_cap: int = HARD_CAP,
+) -> bytes:
     """Count observed bytes even if declared size lies; never retain partial results."""
-    limit = HARD_CAP if approved else min(threshold, HARD_CAP)
+    if not 1 <= threshold <= MAX_AUTO_THRESHOLD:
+        raise PolicyError("Invalid download threshold")
+    limit = hard_cap if approved else min(threshold, hard_cap)
     output = bytearray()
     for chunk in chunks:
-        if len(output) + len(chunk) > limit:
+        observed = len(output) + len(chunk)
+        if observed > hard_cap:
+            raise HardLimitExceeded("File exceeds the hard byte limit")
+        if observed > limit:
             raise PolicyError("Observed file exceeds download limit; explicit approval required")
         output.extend(chunk)
     return bytes(output)
@@ -57,5 +79,6 @@ def validate_url(url: str, allowed_hosts: set[str], resolved_ips: list[str]) -> 
 
 def likely_certificate(subject: str, filename: str) -> bool:
     return filename.lower().endswith(".pdf") and any(
-        word in subject.lower() for word in ("certificate", "credential", "achievement")
+        word in (subject + " " + filename).lower()
+        for word in ("certificate", "credential", "achievement")
     )

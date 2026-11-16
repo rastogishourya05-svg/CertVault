@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Mail, RefreshCw, ShieldCheck } from "lucide-react";
 import { api } from "@/lib/api";
+import { formatBytes } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
 type Pipeline = {
@@ -12,7 +13,6 @@ type Pipeline = {
     id: string;
     account_label: string;
     state: string;
-    automatic: boolean;
     scan_days: number;
   }[];
   jobs: {
@@ -31,6 +31,12 @@ type Pipeline = {
   notifications: { id: string; safe_message: string }[];
 };
 
+function importErrorMessage(code: string) {
+  if (code === "storage_size_limit_exceeded")
+    return "Exceeds the 50 MB (50,000,000-byte) Storage limit. Not saved to your vault; approval cannot bypass this limit.";
+  return code.replaceAll("_", " ");
+}
+
 export function AccountAutomation({
   onImported,
 }: {
@@ -42,7 +48,6 @@ export function AccountAutomation({
   const [busy, setBusy] = useState(false);
   const [consent, setConsent] = useState(false);
   const [days, setDays] = useState(30);
-  const [automatic, setAutomatic] = useState(false);
   const lastImported = useRef("");
   useEffect(() => {
     const signature =
@@ -82,7 +87,7 @@ export function AccountAutomation({
           );
           if (outcome === "connected")
             setMessage(
-              "Gmail connected. Queue a scan below, or wait for your opted-in automatic scan.",
+              "Gmail connected. Start a manual scan whenever you are ready.",
             );
           if (outcome === "failed")
             setError(
@@ -125,7 +130,7 @@ export function AccountAutomation({
     >
       <div className="section-heading">
         <h2 id="automation-heading">
-          <Mail size={20} /> Automatic certificate imports
+          <Mail size={20} /> Gmail certificate imports
         </h2>
         <Button
           variant="outline"
@@ -140,10 +145,17 @@ export function AccountAutomation({
         </Button>
       </div>
       <p className="muted">
-        Connect Gmail once. CertVault looks for certificate PDF attachments,
-        checks your download limit, scans each file and saves it privately. No
-        manual upload is required.
+        Connect your test Gmail account, then start each scan yourself. CertVault
+        looks for certificate PDF attachments, checks your download limit, scans
+        each file and saves it privately.
       </p>
+      <p className="fine-print">
+        PDF attachments only, including scanned PDFs with English OCR (up to three OCR pages).
+        Separate image attachments and certificate links are not imported yet.
+        Include certificate, credential or achievement in the subject or PDF filename.
+        Each manual scan revisits the connected account’s date range.
+      </p>
+      <a href="#private-vault">Go to your certificate vault ↓</a>
       {error && (
         <p className="error-banner" role="alert">
           {error}
@@ -163,8 +175,7 @@ export function AccountAutomation({
       ) : (
         <>
           <p className="fine-print">
-            {state.reason} Automatic scans poll approximately every five minutes
-            while the worker and scheduler are running.
+            {state.reason} Mail is scanned only after you select Scan now.
           </p>
           {state.connections
             .filter((c) => c.state === "connected")
@@ -173,24 +184,19 @@ export function AccountAutomation({
                 <div>
                   <strong>{c.account_label}</strong>
                   <p className="muted">
-                    {c.automatic
-                      ? "Automatic scans enabled"
-                      : "Scan on request"}{" "}
-                    · Past {c.scan_days} days
+                    Scan on request · Past {c.scan_days} days
                   </p>
                 </div>
                 <div className="automation-actions">
                   <Button
-                    disabled={busy}
+                    disabled={busy || state.jobs.some((job) => ["queued", "running"].includes(job.status))}
                     onClick={() =>
                       act(async () => {
                         await api(
                           `/account/pipeline/connections/${c.id}/scan`,
                           "POST",
                         );
-                        setMessage(
-                          "Scan queued. Activity updates automatically; use Refresh activity to reload the vault.",
-                        );
+                        setMessage("Scan queued. Import activity will update here.");
                       })
                     }
                   >
@@ -224,7 +230,7 @@ export function AccountAutomation({
                 const result = await api<{ url: string }>(
                   "/account/pipeline/gmail/authorize",
                   "POST",
-                  { consent, scan_days: days, automatic },
+                  { consent, scan_days: days, automatic: false },
                 );
                 const url = new URL(result.url);
                 if (url.origin !== "https://accounts.google.com")
@@ -248,14 +254,6 @@ export function AccountAutomation({
             <label className="automation-check">
               <input
                 type="checkbox"
-                checked={automatic}
-                onChange={(e) => setAutomatic(e.target.checked)}
-              />{" "}
-              Automatically check for new certificates while connected
-            </label>
-            <label className="automation-check">
-              <input
-                type="checkbox"
                 required
                 checked={consent}
                 onChange={(e) => setConsent(e.target.checked)}
@@ -266,6 +264,13 @@ export function AccountAutomation({
             <Button disabled={busy || !consent}>Connect Gmail securely</Button>
           </form>
           <h3>Import activity</h3>
+          {state.jobs[0]?.status === "completed" && state.imports.length === 0 && (
+            <p role="status">
+              Scan finished with no matching certificate PDFs. Check the connected Gmail
+              address and date range, attach a PDF (not an image), and include certificate,
+              credential or achievement in its subject or filename. Then scan again.
+            </p>
+          )}
           {state.jobs.length === 0 ? (
             <p className="muted">No scan has been queued yet.</p>
           ) : (
@@ -286,9 +291,9 @@ export function AccountAutomation({
                   {item.status.replaceAll("_", " ")} ·{" "}
                   {item.declared_bytes === null
                     ? "Unknown size"
-                    : `${(item.declared_bytes / 1048576).toFixed(1)} MiB`}
+                    : formatBytes(item.declared_bytes)}
                   {item.safe_error
-                    ? ` · ${item.safe_error.replaceAll("_", " ")}`
+                    ? ` · ${importErrorMessage(item.safe_error)}`
                     : ""}
                 </p>
               </div>
@@ -308,7 +313,7 @@ export function AccountAutomation({
                           );
                           setMessage(
                             approve
-                              ? "This file is approved up to the 100 MiB hard cap and queued for processing."
+                              ? "This file is approved for one download, up to the 50 MB (50,000,000-byte) Storage limit."
                               : "Download rejected. No certificate was stored.",
                           );
                         })
@@ -336,3 +341,4 @@ export function AccountAutomation({
     </section>
   );
 }
+

@@ -3,6 +3,15 @@ import { expect, test } from "@playwright/test";
 test("mocked automation activity requires consent and handles per-file approval and disconnect", async ({
   page,
 }) => {
+  const browserErrors: string[] = [];
+  const failedRequests: string[] = [];
+  page.on("pageerror", (error) => browserErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") browserErrors.push(message.text());
+  });
+  page.on("requestfailed", (request) => {
+    failedRequests.push(`${request.method()} ${request.url()}`);
+  });
   let connected = true;
   let status = "awaiting_approval";
   let scans = 0;
@@ -15,7 +24,7 @@ test("mocked automation activity requires consent and handles per-file approval 
     else if (path.endsWith("/profile"))
       body = {
         display_name: "Mocked automation account",
-        download_limit_bytes: 52428800,
+        download_limit_bytes: 45 * 1048576,
       };
     else if (path.endsWith("/certificates")) body = [];
     else if (path.endsWith("/pipeline/status"))
@@ -28,7 +37,7 @@ test("mocked automation activity requires consent and handles per-file approval 
                 id: "mailbox",
                 account_label: "synthetic@example.test",
                 state: "connected",
-                automatic: true,
+                automatic: false,
                 scan_days: 30,
               },
             ]
@@ -46,10 +55,17 @@ test("mocked automation activity requires consent and handles per-file approval 
         imports: [
           {
             id: "item",
-            filename: "Synthetic large certificate.pdf",
-            declared_bytes: 53477376,
+            filename: "Synthetic 49 MB certificate.pdf",
+            declared_bytes: 49000000,
             status,
             safe_error: null,
+          },
+          {
+            id: "blocked",
+            filename: "Synthetic over-limit certificate.pdf",
+            declared_bytes: 50 * 1048576,
+            status: "rejected",
+            safe_error: "storage_size_limit_exceeded",
           },
         ],
         notifications: [],
@@ -73,11 +89,18 @@ test("mocked automation activity requires consent and handles per-file approval 
   });
   await page.goto("/account");
   await expect(
-    page.getByRole("heading", { name: "Automatic certificate imports" }),
+    page.getByRole("heading", { name: "Gmail certificate imports" }),
   ).toBeVisible();
+  await expect(page.getByText("Scan on request · Past 30 days")).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Connect Gmail securely" }),
   ).toBeDisabled();
+  await expect(
+    page.getByText(/Exceeds the 50 MB \(50,000,000-byte\) Storage limit/),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Approve download" }),
+  ).toHaveCount(1);
   await page.getByRole("button", { name: "Scan now" }).click();
   await expect(page.getByText("Scan queued", { exact: true })).toBeVisible();
   expect(scans).toBe(1);
@@ -96,8 +119,28 @@ test("mocked automation activity requires consent and handles per-file approval 
       () => document.documentElement.scrollWidth > window.innerWidth,
     ),
   ).toBe(false);
+  expect(browserErrors).toEqual([]);
+  expect(failedRequests).toEqual([]);
   await page.screenshot({
-    path: `../../docs/evidence/pipeline-${test.info().project.name}.png`,
+    path: `../../docs/evidence/pipeline-size-limit-${test.info().project.name}.png`,
     fullPage: true,
   });
+});
+
+test("empty completed scan explains PDF rules and navigates to vault", async ({ page }) => {
+  await page.route("**/api/account/**", async route => {
+    const path = new URL(route.request().url()).pathname;
+    let body: unknown = {};
+    if (path.endsWith("/config")) body = {configured: true};
+    else if (path.endsWith("/account/status")) body = {authenticated: true};
+    else if (path.endsWith("/profile")) body = {display_name: "Synthetic", download_limit_bytes: 50000000};
+    else if (path.endsWith("/certificates")) body = [];
+    else if (path.endsWith("/pipeline/status")) body = {enabled:true, reason:"Mocked fixture", connections:[], jobs:[{id:"empty",status:"completed",attempts:0,safe_error_code:null}], imports:[],notifications:[]};
+    await route.fulfill({json:body});
+  });
+  await page.goto("/account");
+  await expect(page.getByText(/Scan finished with no matching certificate PDFs/)).toBeVisible();
+  await page.getByRole("link", {name: /Go to your certificate vault/}).click();
+  await expect(page).toHaveURL(/#private-vault$/);
+  await expect(page.locator("#private-vault")).toBeInViewport();
 });

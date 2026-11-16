@@ -13,7 +13,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from apps.api.account import router as account_router
-from apps.api.domain import HARD_CAP, MIB, PolicyError, bounded_bytes, digest, size_decision
+from apps.api.domain import (
+    HARD_CAP,
+    MIB,
+    HardLimitExceeded,
+    PolicyError,
+    bounded_bytes,
+    digest,
+    size_decision,
+)
 from apps.api.limits import BodyLimitMiddleware
 from apps.api.pipeline_routes import router as pipeline_router
 from apps.api.postgres import DatabaseError
@@ -311,9 +319,11 @@ async def upload(file: UploadFile = File(), user=Depends(owner)):
         chunks, count = [], 0
         while chunk := await file.read(64 * 1024):
             count += len(chunk)
+            if count > HARD_CAP:
+                raise HardLimitExceeded("File exceeds the 100 MiB local demonstration limit.")
             if count > threshold:
                 raise PolicyError(
-                    "Upload exceeds your auto-download limit. Raise it in Settings before retrying; hard cap is 100 MiB."
+                    "Upload exceeds your configured auto-download limit. Raise it in Settings before retrying."
                 )
             chunks.append(chunk)
         data = bounded_bytes(chunks, threshold)
@@ -590,7 +600,7 @@ def settings(user=Depends(owner)):
         return {
             "threshold_mib": row["threshold"] // MIB,
             "name": row["name"],
-            "hard_cap_mib": HARD_CAP // MIB,
+            "hard_cap_bytes": HARD_CAP,
         }
 
 

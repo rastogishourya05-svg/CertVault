@@ -9,7 +9,8 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from apps.api.domain import HARD_CAP, PolicyError
+from apps.api.domain import STORAGE_HARD_CAP as HARD_CAP
+from apps.api.domain import PolicyError
 
 
 class ScannerUnavailable(RuntimeError):

@@ -10,7 +10,7 @@ resource.setrlimit(resource.RLIMIT_CPU, (20, 20))
 resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))
 resource.setrlimit(resource.RLIMIT_NOFILE, (32, 32))
 try:
-    text = extract_pdf(Path("/input.pdf").read_bytes())
+    text = extract_pdf(Path("/input.pdf").read_bytes(), ocr=True)
     print(json.dumps({"text": text}))
 except Exception:
     # Never print document contents or parser diagnostics on failure.

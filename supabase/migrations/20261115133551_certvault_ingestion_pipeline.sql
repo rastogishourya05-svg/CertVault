@@ -1,8 +1,13 @@
 begin;
 -- Only the backend role can access pipeline secrets; never granted to API clients.
-do $$ begin
-  if not exists(select 1 from pg_roles where rolname='certvault_pipeline') then
-    create role certvault_pipeline nologin nosuperuser nobypassrls;
+do $$ declare existing_role pg_catalog.pg_roles%rowtype; begin
+  select r.* into existing_role from pg_catalog.pg_roles r where r.rolname='certvault_pipeline';
+  if not found then
+    create role certvault_pipeline nologin noinherit nosuperuser nocreatedb nocreaterole noreplication nobypassrls;
+  elsif existing_role.rolcanlogin or existing_role.rolsuper or existing_role.rolcreatedb
+    or existing_role.rolcreaterole or existing_role.rolreplication or existing_role.rolbypassrls
+    or existing_role.rolinherit then
+    raise exception 'certvault_pipeline exists with unsafe role attributes; refusing to grant pipeline access';
   end if;
 end $$;
 grant usage on schema public,private to certvault_pipeline;
@@ -37,14 +42,36 @@ do $$ declare t text; begin
     execute format('alter table private.%I enable row level security',t);
     execute format('alter table private.%I force row level security',t);
     execute format('revoke all on private.%I from public,anon,authenticated',t);
-    execute format('grant select,insert,update,delete on private.%I to certvault_pipeline',t);
     execute format('create policy pipeline_owner on private.%I to certvault_pipeline using (owner_id=nullif(current_setting(''certvault.owner'',true),'''')::uuid) with check (owner_id=nullif(current_setting(''certvault.owner'',true),'''')::uuid)',t);
   end loop;
-  foreach t in array array['profiles','email_connections','sync_jobs','certificates','certificate_files','notifications','audit_events'] loop
-    execute format('grant select,insert,update on public.%I to certvault_pipeline',t);
+  foreach t in array array['mailbox_tokens'] loop
+    execute format('grant select,insert,update,delete on private.%I to certvault_pipeline',t);
+  end loop;
+  foreach t in array array['pipeline_runs','pipeline_items'] loop
+    execute format('grant select,insert,update on private.%I to certvault_pipeline',t);
+  end loop;
+  foreach t in array array['email_connections','sync_jobs'] loop
+    execute format('create policy pipeline_owner on public.%I to certvault_pipeline using (owner_id=nullif(current_setting(''certvault.owner'',true),'''')::uuid) with check (owner_id=nullif(current_setting(''certvault.owner'',true),'''')::uuid)',t);
+  end loop;
+  foreach t in array array['profiles','certificates','certificate_files','notifications','audit_events'] loop
     execute format('create policy pipeline_owner on public.%I to certvault_pipeline using (owner_id=nullif(current_setting(''certvault.owner'',true),'''')::uuid) with check (owner_id=nullif(current_setting(''certvault.owner'',true),'''')::uuid)',t);
   end loop;
 end $$;
+-- Table/column grants mirror the worker's SQL operations; the login must SET ROLE first.
+grant select(owner_id,download_limit_bytes) on public.profiles to certvault_pipeline;
+grant select(id,owner_id,provider,account_label,cursor,state,created_at) on public.email_connections to certvault_pipeline;
+grant insert(owner_id,provider,account_label,scopes,state,consent_at) on public.email_connections to certvault_pipeline;
+grant update(state,consent_at,cursor) on public.email_connections to certvault_pipeline;
+grant select(id,owner_id,connection_id,idempotency_key,status,attempts,safe_error_code,created_at,updated_at) on public.sync_jobs to certvault_pipeline;
+grant insert(owner_id,connection_id,idempotency_key) on public.sync_jobs to certvault_pipeline;
+grant update(status,attempts,safe_error_code,updated_at) on public.sync_jobs to certvault_pipeline;
+grant select(id,owner_id,trashed_at) on public.certificates to certvault_pipeline;
+grant insert(id,owner_id,title,source,extracted_text,provenance) on public.certificates to certvault_pipeline;
+grant select(id,owner_id,certificate_id,object_path,sha256,bytes) on public.certificate_files to certvault_pipeline;
+grant insert(owner_id,certificate_id,object_path,sha256,mime,bytes,scanned_at) on public.certificate_files to certvault_pipeline;
+grant select(id,owner_id,event_key,kind,safe_message,read_at,created_at) on public.notifications to certvault_pipeline;
+grant insert(owner_id,event_key,kind,safe_message) on public.notifications to certvault_pipeline;
+grant insert(owner_id,action,resource_id) on public.audit_events to certvault_pipeline;
 -- Scheduler alone can enumerate due IDs. No content/tokens returned. Explicit search_path.
 create function private.pipeline_due() returns table(job_id uuid,owner_id uuid)
 language plpgsql security definer set search_path='' as $$

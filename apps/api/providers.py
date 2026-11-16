@@ -17,7 +17,14 @@ import httpx
 from cryptography.fernet import Fernet
 from pydantic import BaseModel, SecretStr
 
-from apps.api.domain import HARD_CAP, PolicyError, bounded_bytes
+from apps.api.domain import (
+    STORAGE_HARD_CAP as HARD_CAP,
+)
+from apps.api.domain import (
+    HardLimitExceeded,
+    PolicyError,
+    bounded_bytes,
+)
 from apps.api.store import db
 
 
@@ -224,7 +231,7 @@ class GmailAdapter:
 
     async def messages(self, page_token: str | None = None, days: int = 90) -> dict:
         params = {
-            "q": f"newer_than:{days}d has:attachment filename:pdf {{certificate credential achievement}}",
+            "q": f"newer_than:{days}d has:attachment filename:pdf",
             "maxResults": 10,
         }
         if page_token:
@@ -271,6 +278,10 @@ class GmailAdapter:
             async for chunk in response.aiter_bytes(65536):
                 observed += len(chunk)
                 if observed > max_encoded:
+                    if max_decoded == HARD_CAP:
+                        raise HardLimitExceeded(
+                            "File exceeds the 50 MB (50,000,000-byte) storage limit"
+                        )
                     raise PolicyError("Encoded attachment exceeds download limit")
                 parts.append(chunk)
         try:
@@ -280,7 +291,7 @@ class GmailAdapter:
             )
         except (ValueError, KeyError, TypeError) as exc:
             raise ProviderUnavailable("Invalid attachment encoding") from exc
-        return bounded_bytes([data], limit, approved)
+        return bounded_bytes([data], limit, approved, hard_cap=HARD_CAP)
 
 
 def _id(value: str) -> str:
@@ -341,6 +352,10 @@ class GraphAdapter:
             async for chunk in response.aiter_bytes(65536):
                 count += len(chunk)
                 if count > cap:
+                    if cap == HARD_CAP:
+                        raise HardLimitExceeded(
+                            "File exceeds the 50 MB (50,000,000-byte) storage limit"
+                        )
                     raise PolicyError("Observed attachment exceeds download limit")
                 chunks.append(chunk)
-        return bounded_bytes(chunks, limit, approved)
+        return bounded_bytes(chunks, limit, approved, hard_cap=HARD_CAP)

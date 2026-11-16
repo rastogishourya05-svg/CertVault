@@ -3,6 +3,7 @@
 This module does not enable production ingestion or use a service-role key.
 """
 
+import asyncio
 import json
 import os
 import secrets
@@ -13,10 +14,12 @@ from typing import Literal
 
 import httpx
 from cryptography.fernet import Fernet, InvalidToken
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
+
+from apps.api.local_config import config_root
 
 router = APIRouter(prefix="/account", tags=["Supabase development account"])
 COOKIE = "cv_account"
@@ -24,14 +27,16 @@ SESSION_TTL = 8 * 3600
 
 
 class AccountConfig(BaseModel):
-    url: str = Field(pattern=r"^https://[a-z0-9]{20}\.supabase\.co$")
+    # This MVP deliberately uses only the loopback Supabase CLI. The older
+    # hosted `.local/supabase.json` is not read by the local demo.
+    url: str = Field(pattern=r"^http://127\.0\.0\.1:54321$")
     publishable_key: SecretStr
     session_key: SecretStr
     enabled: Literal[True]
 
 
 def config() -> AccountConfig | None:
-    path = Path(os.getenv("CERTVAULT_ACCOUNT_CONFIG", ".local/supabase.json"))
+    path = Path(os.getenv("CERTVAULT_ACCOUNT_CONFIG", str(config_root() / "supabase-local.json")))
     if not path.is_file():
         return None
     try:
@@ -191,11 +196,93 @@ async def gateway():
 
 @router.get("/config")
 def account_config():
+    try:
+        from apps.api.pipeline_config import load_pipeline
+
+        uploads_enabled = load_pipeline() is not None
+    except (OSError, ValueError):
+        uploads_enabled = False
     return {
         "configured": config() is not None,
         "environment": "development",
-        "uploads_enabled": False,
+        "uploads_enabled": uploads_enabled,
     }
+
+
+@router.post("/certificates/upload")
+async def upload_certificate(
+    request: Request,
+    file: UploadFile = File(...),
+    g: Gateway = Depends(gateway),
+):
+    """Validate, scan, and privately store one owner-authorized PDF."""
+    _, user_id, token = await g.identity(request)
+    if not file.filename or not file.filename.replace("\\", "/").rsplit("/", 1)[
+        -1
+    ].lower().endswith(".pdf"):
+        raise HTTPException(415, "Choose a PDF certificate file.")
+    if file.content_type not in ("application/pdf", "application/octet-stream"):
+        raise HTTPException(415, "Only PDF certificate files are supported.")
+
+    from apps.api.domain import STORAGE_HARD_CAP, PolicyError
+    from apps.api.pipeline import PrivateStorage, StorageLimitExceeded
+    from apps.api.pipeline_config import load_pipeline
+    from apps.api.pipeline_security import ScannerUnavailable, isolated_extract, scan
+    from apps.api.pipeline_store import PipelineStore
+
+    pipeline = load_pipeline()
+    if not pipeline:
+        raise HTTPException(503, "Local private upload is not configured yet.")
+
+    content = bytearray()
+    while chunk := await file.read(65536):
+        if len(content) + len(chunk) > STORAGE_HARD_CAP:
+            raise HTTPException(
+                413,
+                "This PDF exceeds the 50 MB (50,000,000-byte) local Storage limit and was not saved.",
+            )
+        content.extend(chunk)
+    data = bytes(content)
+    if not data.startswith(b"%PDF-"):
+        raise HTTPException(415, "The selected file is not a valid PDF.")
+
+    store = PipelineStore(pipeline.database_url.get_secret_value(), user_id)
+    if store.find_certificate_hash(data):
+        result = store.complete_manual(
+            file.filename.replace("\\", "/").rsplit("/", 1)[-1], data, ""
+        )
+        return result
+    try:
+        await asyncio.to_thread(scan, data, pipeline.clamd_host, pipeline.clamd_port)
+        text = await asyncio.to_thread(isolated_extract, data, pipeline.parser_image)
+    except ScannerUnavailable:
+        raise HTTPException(
+            503, "Malware scanning or isolated PDF processing is unavailable."
+        ) from None
+    except PolicyError:
+        raise HTTPException(422, "This PDF was rejected or needs manual review.") from None
+
+    filename = file.filename.replace("\\", "/").rsplit("/", 1)[-1][:160]
+    path = user_id + "/" + __import__("hashlib").sha256(data).hexdigest() + ".pdf"
+    try:
+        store.issue_storage_upload(path)
+        await PrivateStorage(
+            g.client, g.config.url, g.config.publishable_key.get_secret_value(), token
+        ).upload(user_id, data)
+        return store.complete_manual(filename, data, text)
+    except StorageLimitExceeded:
+        raise HTTPException(
+            413,
+            "Supabase Storage rejected this PDF at its 50 MB limit. It was not added to your vault.",
+        ) from None
+    except ScannerUnavailable:
+        raise HTTPException(
+            503, "Private certificate storage is unavailable. Please retry."
+        ) from None
+    except (OSError, ValueError):
+        raise HTTPException(
+            503, "Private certificate storage is unavailable. Please retry."
+        ) from None
 
 
 @router.post("/login")
@@ -215,6 +302,37 @@ async def login(body: Credentials, response: Response, g: Gateway = Depends(gate
             params={"grant_type": "password"},
             body={"email": body.email, "password": body.password.get_secret_value()},
         )
+        user = await g.request("GET", "/auth/v1/user", token=tokens["access_token"])
+        user_id = str(uuid.UUID(user["id"]))
+        sid = secrets.token_urlsafe(32)
+        await g.store(sid, tokens, user_id)
+    except RedisError as exc:
+        raise HTTPException(503, "Account session service unavailable. Please retry.") from exc
+    response.set_cookie(
+        COOKIE, sid, httponly=True, samesite="strict", max_age=SESSION_TTL, path="/"
+    )
+    return {"authenticated": True, "id": user_id, "environment": "development"}
+
+
+@router.post("/register", status_code=201)
+async def register(body: Credentials, response: Response, g: Gateway = Depends(gateway)):
+    """Create a local Auth user; local Supabase handles demo confirmation email."""
+    from apps.api.domain import digest
+
+    rate_key = "cv:register:" + digest(body.email.strip().casefold().encode())
+    try:
+        attempts = await g.sessions.incr(rate_key)
+        if attempts == 1:
+            await g.sessions.expire(rate_key, 60)
+        if attempts > 5:
+            raise HTTPException(429, "Too many registration attempts. Try again in a minute.")
+        tokens = await g.request(
+            "POST",
+            "/auth/v1/signup",
+            body={"email": body.email, "password": body.password.get_secret_value()},
+        )
+        if not tokens or not tokens.get("access_token"):
+            return {"authenticated": False, "confirmation_required": True}
         user = await g.request("GET", "/auth/v1/user", token=tokens["access_token"])
         user_id = str(uuid.UUID(user["id"]))
         sid = secrets.token_urlsafe(32)

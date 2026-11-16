@@ -23,7 +23,7 @@ export type Audit = { id: string; event: string; created: string };
 export type Settings = {
   threshold_mib: number;
   name: string;
-  hard_cap_mib: number;
+  hard_cap_bytes: number;
 };
 export type Share = {
   id: string;
