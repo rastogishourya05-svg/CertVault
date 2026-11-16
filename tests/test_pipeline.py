@@ -74,6 +74,7 @@ def scenario(
     unknown=False,
     declared_size=None,
     storage_limit_rejected=False,
+    rotating_attachment_ids=False,
 ):
     pdf = sample_pdf("Pipeline security fixture", "Synthetic issuer")
     if unknown:
@@ -117,7 +118,9 @@ def scenario(
                                 else "credential.pdf",
                                 "mimeType": "application/pdf",
                                 "body": {
-                                    "attachmentId": "file1",
+                                    "attachmentId": "file" + str(len(requests))
+                                    if rotating_attachment_ids
+                                    else "file1",
                                     "size": None
                                     if unknown
                                     else declared_size
@@ -629,3 +632,15 @@ def test_manual_upload_scans_stores_extracts_and_deduplicates(pipeline, client, 
             assert row["bytes"] == len(pdf)
     finally:
         app.dependency_overrides.pop(gateway, None)
+
+
+def test_rotating_gmail_download_tokens_do_not_create_new_sources(pipeline):
+    config, store, connection, _ = pipeline
+    run, requests, objects, _ = scenario(config, store, connection, rotating_attachment_ids=True)
+    asyncio.run(run(store.enqueue(connection, rescan=True)))
+    asyncio.run(run(store.enqueue(connection, rescan=True)))
+    snapshot = store.snapshot()
+    assert len(snapshot["imports"]) == 1
+    assert snapshot["imports"][0]["status"] == "stored"
+    assert sum("/attachments/" in r.url.path for r in requests) == 1
+    assert len(objects) == 1

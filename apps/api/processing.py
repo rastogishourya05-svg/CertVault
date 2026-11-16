@@ -48,6 +48,11 @@ def extract_pdf(data: bytes, *, ocr=False) -> str:
                         textpage=page.get_textpage_ocr(language="eng", dpi=150, full=True)
                     )[:10000]
                 texts.append(page_text)
+                # Preserve PDF hyperlink targets as data for issuer review; never fetch them here.
+                for link in page.get_links()[:20]:
+                    uri = link.get("uri", "")
+                    if uri.startswith("https://") and len(uri) <= 1000:
+                        texts.append("Verification reference: " + uri)
             text = "\n".join(texts)[:50000]
             if not text.strip():
                 raise PolicyError("Scanned PDF needs OCR; local OCR is not configured")

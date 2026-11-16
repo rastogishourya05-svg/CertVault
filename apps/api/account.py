@@ -462,6 +462,33 @@ async def certificates(
     return await g.request("GET", "/rest/v1/certificates", token=token, params=params)
 
 
+@router.get("/certificates/{key}/verification")
+async def certificate_verification(key: uuid.UUID, request: Request, g: Gateway = Depends(gateway)):
+    from apps.api.verification import verification_details
+
+    _, owner, token = await g.identity(request)
+    rows = await g.request(
+        "GET",
+        "/rest/v1/certificates",
+        token=token,
+        params={
+            "id": "eq." + str(key),
+            "owner_id": "eq." + owner,
+            "trashed_at": "is.null",
+            "select": "extracted_text,recipient,title,issuer",
+        },
+    )
+    if not rows:
+        raise HTTPException(404, "Certificate not found")
+    row = rows[0]
+    return {
+        **verification_details(row["extracted_text"]),
+        "recipient": row.get("recipient"),
+        "title": row["title"],
+        "issuer": row.get("issuer"),
+    }
+
+
 @router.patch("/certificates/{key}")
 async def update_certificate(
     key: uuid.UUID, body: AccountCertificateEdit, request: Request, g: Gateway = Depends(gateway)

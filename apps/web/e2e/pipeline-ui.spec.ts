@@ -144,3 +144,22 @@ test("empty completed scan explains PDF rules and navigates to vault", async ({ 
   await expect(page).toHaveURL(/#private-vault$/);
   await expect(page.locator("#private-vault")).toBeInViewport();
 });
+
+test('issuer review exposes evidence without claiming authenticity', async ({ page }) => {
+  await page.route('**/api/account/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    let body: unknown = {};
+    if (path.endsWith('/config')) body = {configured:true};
+    else if (path.endsWith('/account/status')) body = {authenticated:true};
+    else if (path.endsWith('/profile')) body = {display_name:'Synthetic',download_limit_bytes:50000000};
+    else if (path.endsWith('/pipeline/status')) body = {enabled:false,reason:'Mocked fixture',connections:[],jobs:[],imports:[],notifications:[]};
+    else if (path.endsWith('/verification')) body = {credential_id:'ABC12345',recipient:'Synthetic learner',status:'issuer_review_available',explanation:'Compare details on the issuer page.',issuer_links:[{issuer:'Coursera',url:'https://www.coursera.org/verify/ABC12345'}]};
+    else if (path.endsWith('/certificates')) body = [{id:'synthetic',title:'Synthetic course',issuer:'Synthetic issuer',category:'Education',favorite:false,source:'gmail',issued_on:null}];
+    await route.fulfill({json:body});
+  });
+  await page.goto('/account');
+  await page.getByRole('button', {name:'Credential & issuer verification'}).click();
+  await expect(page.getByText('Authenticity: not verified', {exact:true})).toBeVisible();
+  await expect(page.getByText('Credential ID: ABC12345')).toBeVisible();
+  await expect(page.getByRole('link', {name:/Review on Coursera/})).toHaveAttribute('rel','noopener noreferrer');
+});

@@ -71,15 +71,29 @@ class PipelineStore:
             if not row:
                 raise ValueError("Mailbox not connected")
             job = db.execute(
-                "select id from public.sync_jobs where owner_id=%s and connection_id=%s and status in ('queued','running','retry') limit 1",
+                "select id,status from public.sync_jobs where owner_id=%s and connection_id=%s and status in ('queued','running','retry') limit 1",
                 (self.owner, connection),
             ).fetchone()
+            if rescan and job and job["status"] == "retry":
+                db.execute(
+                    "update public.sync_jobs set status='cancelled',safe_error_code='superseded_by_manual_rescan',updated_at=now() where id=%s and owner_id=%s",
+                    (job["id"], self.owner),
+                )
+                job = None
             if not job:
                 if rescan:
+                    # Older code used a volatile Gmail download token as source identity.
+                    # Preserve history, but retire those pending references on explicit rescan.
+                    db.execute(
+                        "update private.pipeline_items set status='needs_review',safe_error='legacy_source_reference',updated_at=now() "
+                        "where connection_id=%s and owner_id=%s and attachment_id not like 'part:%%' "
+                        "and status in ('eligible','downloading','scanning','extracting')",
+                        (connection, self.owner),
+                    )
                     db.execute(
                         "update private.pipeline_items set status='eligible',safe_error=null,updated_at=now() "
                         "where connection_id=%s and owner_id=%s and status='needs_review' "
-                        "and safe_error='document_rejected_or_ocr_required'",
+                        "and safe_error='document_rejected_or_ocr_required' and attachment_id like 'part:%%'",
                         (connection, self.owner),
                     )
                     db.execute(
@@ -114,7 +128,10 @@ class PipelineStore:
                     "select id,status,attempts,safe_error_code,updated_at from public.sync_jobs where owner_id=%s order by created_at desc limit 20"
                 ),
                 "imports": rows(
-                    "select id,filename,declared_bytes,status,safe_error,approved from private.pipeline_items where owner_id=%s order by created_at desc limit 100"
+                    "select i.id,i.filename,i.declared_bytes,i.status,i.safe_error,i.approved from private.pipeline_items i where i.owner_id=%s "
+                    "and not (i.attachment_id not like 'part:%%' and exists (select 1 from private.pipeline_items n "
+                    "where n.owner_id=i.owner_id and n.connection_id=i.connection_id and n.message_id=i.message_id "
+                    "and n.filename=i.filename and n.attachment_id like 'part:%%')) order by i.created_at desc limit 100"
                 ),
                 "notifications": rows(
                     "select id,kind,safe_message,read_at from public.notifications where owner_id=%s order by created_at desc limit 20"

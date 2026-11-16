@@ -142,9 +142,21 @@ async def process_item(
     approved = item["approved"]
     store.item_state(item["id"], "downloading")
     try:
-        data = await adapter.attachment(
-            item["message_id"], item["attachment_id"], threshold, approved
-        )
+        attachment_id = item["attachment_id"]
+        if attachment_id.startswith("part:"):
+            message = await adapter.message(item["message_id"])
+            attachment_id = next(
+                (
+                    part.get("body", {}).get("attachmentId")
+                    for index, part in enumerate(parts(message.get("payload", {})))
+                    if "part:" + str(part.get("partId", index)) == item["attachment_id"]
+                ),
+                None,
+            )
+            if not attachment_id:
+                store.item_state(item["id"], "needs_review", "attachment_no_longer_available")
+                return
+        data = await adapter.attachment(item["message_id"], attachment_id, threshold, approved)
     except HardLimitExceeded:
         store.item_state(item["id"], "rejected", "storage_size_limit_exceeded")
         return
@@ -300,7 +312,7 @@ async def _page(config, store, job, http, storage, scan_file, parse_file):
             ),
             "",
         )
-        for part in parts(payload):
+        for part_index, part in enumerate(parts(payload)):
             filename, body = part["filename"], part.get("body", {})
             if not likely_certificate(subject, filename):
                 continue
@@ -312,7 +324,12 @@ async def _page(config, store, job, http, storage, scan_file, parse_file):
             if size is not None and (not isinstance(size, int) or isinstance(size, bool)):
                 size = None
             item = store.discover(
-                connection_id, reference["id"], attachment, filename, size, threshold
+                connection_id,
+                reference["id"],
+                "part:" + str(part.get("partId", part_index)),
+                filename,
+                size,
+                threshold,
             )
             if item["status"] in ("eligible", "downloading", "scanning", "extracting"):
                 if work >= 1:

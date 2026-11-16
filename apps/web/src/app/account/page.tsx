@@ -13,6 +13,7 @@ import {
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { AccountAutomation } from "@/components/account-automation";
+import { CertificateVerification } from "@/components/certificate-verification";
 
 type LiveCertificate = {
   id: string;
@@ -354,6 +355,7 @@ export default function DevelopmentAccount() {
                       </button>
                     </div>
                     <p>{c.issuer || "Issuer needs review"}</p>
+                    <CertificateVerification id={c.id} />
                     <a
                       className="text-button"
                       target="_blank"
