@@ -74,12 +74,16 @@ class Gateway:
         self.config, self.client, self.sessions = settings, client, sessions
         self.cipher = Fernet(settings.session_key.get_secret_value().encode())
 
-    async def request(self, method, path, *, token=None, body=None, params=None):
+    async def request(
+        self, method, path, *, token=None, body=None, params=None, ignore_duplicates=False
+    ):
         headers = {"apikey": self.config.publishable_key.get_secret_value()}
         if token:
             headers["Authorization"] = f"Bearer {token}"
         if path.startswith("/rest/v1/"):
             headers["Prefer"] = "return=representation"
+            if ignore_duplicates:
+                headers["Prefer"] += ",resolution=ignore-duplicates"
         try:
             async with self.client.stream(
                 method,
@@ -102,6 +106,10 @@ class Gateway:
                 if response.status_code == 403:
                     raise HTTPException(
                         403, "You do not have permission to access this account resource."
+                    )
+                if response.status_code == 409:
+                    raise HTTPException(
+                        409, "The record already exists or the referenced record is unavailable."
                     )
                 if response.status_code in (400, 422):
                     raise HTTPException(
@@ -445,17 +453,36 @@ async def favorite_certificate(
     return {"ok": True}
 
 
+@router.post("/notifications/read")
+async def read_notifications(request: Request, g: Gateway = Depends(gateway)):
+    from datetime import UTC, datetime
+
+    _, owner, token = await g.identity(request)
+    await g.request(
+        "PATCH",
+        "/rest/v1/notifications",
+        token=token,
+        params={"owner_id": "eq." + owner, "read_at": "is.null"},
+        body={"read_at": datetime.now(UTC).isoformat()},
+    )
+    return {"ok": True}
+
+
 @router.get("/certificates")
 async def certificates(
-    request: Request, q: str = Query(default="", max_length=200), g: Gateway = Depends(gateway)
+    request: Request,
+    q: str = Query(default="", max_length=200),
+    offset: int = Query(default=0, ge=0),
+    g: Gateway = Depends(gateway),
 ):
     _, user_id, token = await g.identity(request)
     params = {
         "owner_id": "eq." + user_id,
         "trashed_at": "is.null",
         "select": "id,title,issuer,category,source,favorite,issued_on,created_at",
-        "order": "created_at.desc",
+        "order": "created_at.desc,id.desc",
         "limit": "100",
+        "offset": str(offset),
     }
     if q.strip():
         params["search_document"] = "wfts(simple)." + q.strip()
@@ -503,4 +530,70 @@ async def update_certificate(
     )
     if not result:
         raise HTTPException(404, "Certificate not found")
+    return {"ok": True}
+
+
+GroupKind = Literal["collections", "tags"]
+GROUP_MEMBERS = {
+    "collections": ("collection_items", "collection_id"),
+    "tags": ("certificate_tags", "tag_id"),
+}
+
+
+class GroupName(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
+@router.get("/organization/{kind}")
+async def account_groups(kind: GroupKind, request: Request, g: Gateway = Depends(gateway)):
+    _, owner, token = await g.identity(request)
+    table, _ = GROUP_MEMBERS[kind]
+    return await g.request(
+        "GET",
+        f"/rest/v1/{kind}",
+        token=token,
+        params={
+            "owner_id": "eq." + owner,
+            "select": f"id,name,{table}(certificate_id)",
+            "order": "name,id",
+        },
+    )
+
+
+@router.post("/organization/{kind}", status_code=201)
+async def create_account_group(
+    kind: GroupKind, body: GroupName, request: Request, g: Gateway = Depends(gateway)
+):
+    _, owner, token = await g.identity(request)
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(422, "Enter a name.")
+    return await g.request(
+        "POST", f"/rest/v1/{kind}", token=token, body={"owner_id": owner, "name": name}
+    )
+
+
+@router.put("/organization/{kind}/{group_id}/{certificate_id}")
+@router.delete("/organization/{kind}/{group_id}/{certificate_id}")
+async def group_membership(
+    kind: GroupKind,
+    group_id: uuid.UUID,
+    certificate_id: uuid.UUID,
+    request: Request,
+    g: Gateway = Depends(gateway),
+):
+    _, owner, token = await g.identity(request)
+    table, key = GROUP_MEMBERS[kind]
+    membership = {"owner_id": owner, key: str(group_id), "certificate_id": str(certificate_id)}
+    if request.method == "DELETE":
+        await g.request(
+            "DELETE",
+            f"/rest/v1/{table}",
+            token=token,
+            params={k: "eq." + v for k, v in membership.items()},
+        )
+    else:
+        await g.request(
+            "POST", f"/rest/v1/{table}", token=token, body=membership, ignore_duplicates=True
+        )
     return {"ok": True}

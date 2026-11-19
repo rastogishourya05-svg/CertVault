@@ -408,3 +408,25 @@ def test_revoked_session_cleanup_failure_does_not_leak_store_errors(account, mon
     assert result.status_code == 200
     assert not result.json()["authenticated"]
     assert "private cleanup" not in result.text
+
+
+def test_clear_notifications_is_owner_scoped_and_preserves_data(client):
+    calls = []
+
+    class NotificationsGateway:
+        async def identity(self, request):
+            return "session", OWNER, "private-token"
+
+        async def request(self, method, path, **kwargs):
+            calls.append((method, path, kwargs))
+            return []
+
+    app.dependency_overrides[gateway] = lambda: NotificationsGateway()
+    try:
+        assert client.post("/account/notifications/read").status_code == 200
+        method, path, kwargs = calls[0]
+        assert method == "PATCH" and path == "/rest/v1/notifications"
+        assert kwargs["params"] == {"owner_id": "eq." + OWNER, "read_at": "is.null"}
+        assert list(kwargs["body"]) == ["read_at"]
+    finally:
+        app.dependency_overrides.pop(gateway, None)

@@ -128,7 +128,7 @@ async def pipeline_status(request: Request, g: Gateway = Depends(gateway)):
     return jsonable_encoder(
         {
             "enabled": True,
-            "reason": "Development Gmail automation; PDF attachments only. Links and OCR require review.",
+            "reason": "PDF imports support English OCR. Review extracted details against the issuer's record.",
             **state,
         }
     )

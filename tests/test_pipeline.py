@@ -298,6 +298,9 @@ def test_oversized_reject_and_approve_are_specific_and_owner_scoped(pipeline):
     asyncio.run(run(store.enqueue(connection)))
     assert store.snapshot()["imports"][0]["status"] == "stored"
     assert len(objects) == 1
+    recent, previous = store.snapshot()["jobs"][:2]
+    assert recent["summary"] == {"stored": 1} and len(recent["stored_files"]) == 1
+    assert previous["summary"] == {"awaiting_approval": 1} and previous["stored_files"] == []
 
 
 @pytest.mark.parametrize("declared_size", [50 * MIB, 51 * MB, 100 * MIB])
@@ -465,6 +468,7 @@ def test_page_checkpoint_and_identical_files_from_different_messages(pipeline):
     assert store.connection(connection)["cursor"] is None
     asyncio.run(run(job))
     assert store.snapshot()["jobs"][0]["status"] == "completed"
+    assert store.snapshot()["jobs"][0]["summary"] == {"stored": 1, "duplicate": 1}
     assert sorted(i["status"] for i in store.snapshot()["imports"]) == ["duplicate", "stored"]
     assert len(objects) == 1
     with connect(store.dsn) as db:
@@ -640,6 +644,8 @@ def test_rotating_gmail_download_tokens_do_not_create_new_sources(pipeline):
     asyncio.run(run(store.enqueue(connection, rescan=True)))
     asyncio.run(run(store.enqueue(connection, rescan=True)))
     snapshot = store.snapshot()
+    assert snapshot["jobs"][0]["summary"] == {"already_stored": 1}
+    assert snapshot["jobs"][1]["summary"] == {"stored": 1}
     assert len(snapshot["imports"]) == 1
     assert snapshot["imports"][0]["status"] == "stored"
     assert sum("/attachments/" in r.url.path for r in requests) == 1

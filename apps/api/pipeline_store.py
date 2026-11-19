@@ -125,16 +125,26 @@ class PipelineStore:
                     "select c.id,c.account_label,c.state,m.automatic,m.scan_days from public.email_connections c join private.mailbox_tokens m on m.connection_id=c.id where c.owner_id=%s order by c.created_at desc"
                 ),
                 "jobs": rows(
-                    "select id,status,attempts,safe_error_code,updated_at from public.sync_jobs where owner_id=%s order by created_at desc limit 20"
+                    "select j.id,j.status,j.attempts,j.safe_error_code,j.updated_at,r.summary, "
+                    "(select coalesce(jsonb_agg(result),'[]'::jsonb) from (select i.certificate_id,i.filename "
+                    "from private.scan_items s join private.pipeline_items i on i.id=s.item_id and i.owner_id=s.owner_id "
+                    "where s.job_id=j.id and s.owner_id=j.owner_id and s.outcome='stored' and i.certificate_id is not null "
+                    "order by i.filename,i.id limit 20) result) as stored_files "
+                    "from public.sync_jobs j left join private.pipeline_runs r "
+                    "on r.job_id=j.id and r.owner_id=j.owner_id where j.owner_id=%s order by j.created_at desc limit 20"
                 ),
                 "imports": rows(
-                    "select i.id,i.filename,i.declared_bytes,i.status,i.safe_error,i.approved from private.pipeline_items i where i.owner_id=%s "
+                    "select i.id,i.filename,i.declared_bytes,i.status,i.safe_error,i.approved,i.certificate_id from private.pipeline_items i where i.owner_id=%s "
                     "and not (i.attachment_id not like 'part:%%' and exists (select 1 from private.pipeline_items n "
                     "where n.owner_id=i.owner_id and n.connection_id=i.connection_id and n.message_id=i.message_id "
                     "and n.filename=i.filename and n.attachment_id like 'part:%%')) order by i.created_at desc limit 100"
                 ),
+                "approvals": rows(
+                    "select id,filename,status,declared_bytes,safe_error from private.pipeline_items "
+                    "where owner_id=%s and status='awaiting_approval' order by created_at"
+                ),
                 "notifications": rows(
-                    "select id,kind,safe_message,read_at from public.notifications where owner_id=%s order by created_at desc limit 20"
+                    "select id,kind,safe_message,read_at from public.notifications where owner_id=%s and read_at is null order by created_at desc limit 20"
                 ),
             }
 

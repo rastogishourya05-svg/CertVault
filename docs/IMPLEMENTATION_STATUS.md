@@ -1,5 +1,19 @@
 # Implementation status
 
+## 2026-11-19 · Signed-in hackathon dashboard
+
+- Completed the planned owner-scoped organization, scan-history, authenticated navigation and vault slices. The real local workspace is `/account`. Overview, My vault, Connected mailboxes, Approval inbox, Activity, Collections & tags and Preferences share one responsive navigation. The synthetic workspace at `/` stays separate.
+- A per-run ledger records each unique attachment once across pagination and retries. Completion freezes counts and newly stored file references. Previous runs keep their original status without fabricated counts. The local-only migration 20261119070000 is recorded in the local Supabase history. Restarted the local API and idle ingestion worker.
+- Two temporary local Supabase users exercised registration, login, PDF scanning and private Storage upload, preview/download with byte comparison, duplicate detection, persistent collections and tags, foreign-owner denial, settings and logout. The check removed its temporary credentials, Auth users and synthetic PDFs. Desktop and mobile Chrome both passed with real local Auth, private PDFs and saved memberships. Live Gmail OAuth and a new mailbox scan were outside this run.
+- Browser regression: 18 standard cases passed, plus the two opt-in real account browser cases in a separate run. Two frontend unit tests, TypeScript, web lint and production build passed. Inspected 1440px and 390px overview screenshots. Fixed delayed membership-checkbox feedback and the preferences form rejecting an existing fractional MiB limit.
+- Final backend regression passed all 104 tests with the disposable PostgreSQL database, real ClamAV and isolated parser enabled. ClamAV returned PONG on the required socket and remained healthy at handoff. Dashboard returned HTTP 200, one ingestion worker answered, and zero temporary dashboard accounts remained. Returned the regression-only database to its prior stopped state.
+- Fixed ClamAV supervisor readiness: its init script requires a Unix socket even when the application uses loopback TCP. Pin LF for its mounted Linux configuration. Private scanning continues to fail closed when unavailable.
+- Remaining scope: automatic issuer authentication, public profiles/sharing and social publishing for real accounts are separate projects. Manual Gmail regression uses a mocked provider in this run; the next external check is one user-triggered scan of the consented test mailbox.
+- Tooling notes: repository-wide Ruff also reports pre-existing style findings in the hackathon deck generator. The installed CLI warned that three existing `auth.email` settings in the local Supabase config were unrecognized during history repair.
+
+## Notification dismissal (2026-11-17)
+- Added Clear notifications in the real account imports panel. Authenticated owner JWT updates only that owner's unread notification `read_at`; pipeline snapshot shows unread notifications. Certificates, audit and import records are retained. Local API restarted; frontend lint/typecheck passed. Live browser dismissal remains to be confirmed.
+
 ## Local completion work in progress (2026-11-17)
 - Verification of this slice: 103 backend tests passed with real scanner/OCR on fresh disposable DB; 6 desktop/mobile Playwright regressions passed with mocked APIs (4 import/navigation + 2 issuer review), lint/typecheck/production build passed. Initial security run failed while antivirus was unavailable/initializing; rerun after healthy passed. Parser rebuilt and API/worker restarted. Live stable-token rescan and private download still need user-session browser confirmation.
 - Retry rescan now cancels only the existing retry job before creating replacement work; obsolete source references are retained as history, and the activity snapshot hides legacy token entries once a stable MIME-part entry exists for that file/message. Existing certificates are not deleted or moved between owners.

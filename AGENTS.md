@@ -33,3 +33,5 @@ A feature is done only when it works end-to-end, has tests, proper authorization
 - Read `docs/IMPLEMENTATION_STATUS.md` for verified evidence and remaining work before resuming. Do not silently enable real integrations or replace synthetic adapters with untested live claims.
 - The 2026-11-15 production-gap audit is in `docs/IMPLEMENTATION_AUDIT.md`. Prioritize authenticated manual ingestion before live mailbox wiring; historical Auth evidence is not a current live regression pass.
 - Gmail pipeline code and local security services now exist; read `docs/GMAIL_PIPELINE.md`. Live imports remain disabled, hosted pipeline migration/Storage and real Gmail are unverified. Never enable them without configuration, security verification and explicit test-mailbox consent.
+
+- Local signed-in dashboard uses owner-authorized account and pipeline routes. Verify account changes with the two-user local smoke in `scripts/check-account-dashboard.py --browser` after reading its fixture and cleanup behavior. Scan summaries are recorded from migration 20261119070000 onward. Keep Gmail scans user-triggered.

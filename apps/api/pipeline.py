@@ -256,11 +256,21 @@ async def _page(config, store, job, http, storage, scan_file, parse_file):
     threshold = profile["download_limit_bytes"] if profile else 52428800
     tokens = await access(config, store, connection, http)
     adapter = GmailAdapter(http, tokens.access_token)
+
+    def remember(item):
+        with store.db() as db:
+            db.execute(
+                "insert into private.scan_items(owner_id,job_id,item_id,already_stored) "
+                "values(%s,%s,%s,%s) on conflict do nothing",
+                (store.owner, key, item["id"], item["status"] == "stored"),
+            )
+
     work = 0
     for item in pending:
         if work >= 1:
             requeue_page(store, key)
             return
+        remember(item)
         await process_item(
             config, store, connection, item, adapter, storage, threshold, scan_file, parse_file
         )
@@ -331,6 +341,7 @@ async def _page(config, store, job, http, storage, scan_file, parse_file):
                 size,
                 threshold,
             )
+            remember(item)
             if item["status"] in ("eligible", "downloading", "scanning", "extracting"):
                 if work >= 1:
                     requeue_page(store, key)
@@ -357,6 +368,18 @@ async def _page(config, store, job, http, storage, scan_file, parse_file):
             ("queued" if next_page else "completed", key, store.owner),
         )
         if not next_page:
+            db.execute(
+                "update private.scan_items s set outcome=case when s.already_stored then 'already_stored' "
+                "else i.status end from private.pipeline_items i where s.item_id=i.id and s.owner_id=i.owner_id "
+                "and s.job_id=%s and s.owner_id=%s",
+                (key, store.owner),
+            )
+            db.execute(
+                "update private.pipeline_runs set summary=(select coalesce(jsonb_object_agg(outcome,n),'{}'::jsonb) "
+                "from (select outcome,count(*) n from private.scan_items where job_id=%s and owner_id=%s "
+                "group by outcome) totals) where job_id=%s and owner_id=%s",
+                (key, store.owner, key, store.owner),
+            )
             # Anchor captured before backfill; history uses the provider's final watermark.
             cursor = page.get("historyId", anchor) if mode == "history" else anchor
             db.execute(

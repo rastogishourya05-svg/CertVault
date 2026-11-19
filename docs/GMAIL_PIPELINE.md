@@ -1,5 +1,14 @@
 # Gmail ingestion development runbook
 
+### Signed-in local dashboard
+
+Open `http://127.0.0.1:3000/account`. Use **Connected mailboxes** to start a manual scan and **Activity** to see its results. Completed runs created with migration `20261119070000` record outcomes per unique attachment, including files previously stored. A newly saved file links to its owner-authorized preview. Older scans retain their recorded status. Activity shows the latest 20 runs and 100 recent import items. The approval inbox queries pending decisions separately.
+
+Use **My vault** for previews, downloads, source/search filters, favorites, and grid/list views. **Collections & tags** stores private memberships in the existing RLS tables. **Preferences** supports download thresholds specified in fractional MiB, rounded to bytes. The server enforces the configured hard limit.
+
+For a local regression with real Auth and private Storage, start the local app and security services, set `$env:PYTHONPATH='.'`, then run `.venv/Scripts/python scripts/check-account-dashboard.py --browser`. The check creates two synthetic local accounts, uploads and downloads test PDFs, verifies isolation and duplicate handling, exercises Chrome at two sizes, then removes its own fixtures. It never triggers a mailbox scan. The cleanup uses the local Storage container's existing internal credential solely inside that container to remove the generated object paths.
+
+
 ## Hackathon MVP local setup — current instructions
 
 This section supersedes the older hosted-project setup below for the hackathon MVP. **Do not connect CertVault to project `taeeofpjhubjvypbnldy` (the dashboard labels it PRODUCTION), run `db push`, apply hosted migrations, or use its database credentials.** The MVP uses the local Supabase CLI stack at `http://127.0.0.1:54321` and a disposable local PostgreSQL test database. No service-role/project-secret Storage key is used. Live Gmail imports remain off until explicitly enabled from the local configuration prompt.

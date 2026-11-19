@@ -1,8 +1,21 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
+  LayoutDashboard,
+  FolderLock,
+  Library,
+  Mail,
+  Inbox,
+  Activity,
+  Settings,
   Award,
   Eye,
   LockKeyhole,
@@ -12,6 +25,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { AccountOrganization } from "@/components/account-organization";
 import { AccountAutomation } from "@/components/account-automation";
 import { CertificateVerification } from "@/components/certificate-verification";
 
@@ -26,7 +40,49 @@ type LiveCertificate = {
 };
 type Profile = { display_name: string; download_limit_bytes: number };
 
+const sections = [
+  ["overview", "Overview"],
+  ["private-vault", "My vault"],
+  ["organization", "Collections & tags"],
+  ["mailboxes", "Connected mailboxes"],
+  ["approvals", "Approval inbox"],
+  ["activity", "Activity"],
+  ["preferences", "Preferences"],
+] as const;
+const navIcons = {
+  overview: LayoutDashboard,
+  "private-vault": FolderLock,
+  organization: Library,
+  mailboxes: Mail,
+  approvals: Inbox,
+  activity: Activity,
+  preferences: Settings,
+};
+function watchSection(callback: () => void) {
+  window.addEventListener("hashchange", callback);
+  return () => window.removeEventListener("hashchange", callback);
+}
+function currentSection() {
+  return (
+    sections.find(([key]) => key === window.location.hash.slice(1))?.[0] ??
+    (new URLSearchParams(window.location.search).has("mailbox")
+      ? "mailboxes"
+      : "overview")
+  );
+}
 export default function DevelopmentAccount() {
+  const section = useSyncExternalStore(
+    watchSection,
+    currentSection,
+    () => "overview",
+  );
+  const [favorites, setFavorites] = useState(false);
+  const [list, setList] = useState(false);
+  const [counts, setCounts] = useState<{
+    mailboxes: number;
+    approvals: number;
+  } | null>(null);
+  const [total, setTotal] = useState<number | null>(null);
   const [checking, setChecking] = useState(true),
     [configured, setConfigured] = useState(false),
     [uploadsEnabled, setUploadsEnabled] = useState(false),
@@ -45,14 +101,25 @@ export default function DevelopmentAccount() {
       display_name: "Your workspace",
       download_limit_bytes: 52428800,
     });
+  const refreshVersion = useRef(0);
+  const search = section === "private-vault" ? query : "";
   const refresh = useCallback(
     async (accept: () => boolean = () => true) => {
-      const c = await api<LiveCertificate[]>(
-        `/account/certificates?q=${encodeURIComponent(query)}`,
-      );
-      if (accept()) setCerts(c);
+      const version = ++refreshVersion.current;
+      const records: LiveCertificate[] = [];
+      let page: LiveCertificate[];
+      do {
+        page = await api<LiveCertificate[]>(
+          `/account/certificates?q=${encodeURIComponent(search)}&offset=${records.length}`,
+        );
+        if (!accept() || version !== refreshVersion.current) return;
+        records.push(...page);
+      } while (page.length === 100);
+      const unique = [...new Map(records.map((c) => [c.id, c])).values()];
+      setCerts(unique);
+      if (!search.trim()) setTotal(unique.length);
     },
-    [query],
+    [search],
   );
   useEffect(() => {
     api<{ configured: boolean; uploads_enabled: boolean }>("/account/config")
@@ -113,10 +180,38 @@ export default function DevelopmentAccount() {
   }
   const visibleCertificates = certs.filter(
     (certificate) =>
-      sourceFilter === "all" || certificate.source === sourceFilter,
+      (!favorites || certificate.favorite) &&
+      (sourceFilter === "all" || certificate.source === sourceFilter),
   );
   return (
-    <main className="account-page">
+    <main
+      className={
+        authenticated ? "account-page signed-workspace" : "account-page"
+      }
+    >
+      {authenticated && (
+        <aside className="account-rail">
+          <strong>
+            <ShieldCheck /> CertVault
+          </strong>
+          <p>Private workspace</p>
+          <nav aria-label="Account workspace">
+            {sections.map(([key, label]) => {
+              const Icon = navIcons[key];
+              return (
+                <a
+                  href={"#" + key}
+                  key={key}
+                  aria-current={section === key ? "page" : undefined}
+                >
+                  <Icon size={17} aria-hidden="true" />
+                  {label}
+                </a>
+              );
+            })}
+          </nav>
+        </aside>
+      )}
       <Link className="brand" href="/">
         <ShieldCheck />
         CertVault<span className="beta">DEVELOPMENT</span>
@@ -133,12 +228,12 @@ export default function DevelopmentAccount() {
           <p className="eyebrow">YOUR IDENTITY. YOUR PRIVATE WORKSPACE.</p>
           <h1>
             {authenticated
-              ? profile.display_name
+              ? sections.find(([key]) => key === section)?.[1]
               : "A secure home for your learning."}
           </h1>
           <p>
             {authenticated
-              ? "This view uses real owner-scoped Supabase data. Your local demo is separate."
+              ? profile.display_name
               : "Sign in with an existing account in the authorized development project."}
           </p>
         </div>
@@ -170,7 +265,11 @@ export default function DevelopmentAccount() {
       ) : !authenticated ? (
         <div className="settings-grid">
           <section className="panel">
-            <h2>Sign in to your development account</h2>
+            <h2>
+              {creatingAccount
+                ? "Create your CertVault account"
+                : "Sign in to your development account"}
+            </h2>
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -187,7 +286,7 @@ export default function DevelopmentAccount() {
                   if (result.authenticated) setAuthenticated(true);
                   else
                     setMessage(
-                      "Account created. Check local Auth mail in Supabase Inbucket, then sign in.",
+                      "Account created. Check local Auth mail in Supabase the local test inbox, then sign in.",
                     );
                 });
               }}
@@ -207,7 +306,9 @@ export default function DevelopmentAccount() {
                 <input
                   required
                   type="password"
-                  autoComplete={creatingAccount ? "new-password" : "current-password"}
+                  autoComplete={
+                    creatingAccount ? "new-password" : "current-password"
+                  }
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
@@ -253,174 +354,202 @@ export default function DevelopmentAccount() {
         </div>
       ) : (
         <>
-          <AccountAutomation onImported={refresh} />
-          <div className="section-heading">
-            <h2>
-              <span id="private-vault">Your private certificates</span>{" "}
-              <span className="number-pill">{certs.length}</span>
-            </h2>
-            <Button
-              variant="outline"
-              disabled={busy}
-              onClick={() =>
-                action(async () => {
-                  const r = await api<{
-                    provider_revocation_confirmed: boolean;
-                  }>("/account/logout", "POST");
-                  setAuthenticated(false);
-                  setCerts([]);
-                  setMessage(
-                    r.provider_revocation_confirmed
-                      ? "Signed out securely."
-                      : "Signed out here. Provider session revocation could not be confirmed.",
-                  );
-                })
-              }
-            >
-              Sign out
-            </Button>
-          </div>
-          <label className="search-field account-search">
-            <Search size={18} />
-            <input
-              aria-label="Search development certificates"
-              disabled={busy}
-              maxLength={200}
-              placeholder="Search titles, issuers and extracted text…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-          </label>
-          <label className="account-source-filter">
-            Filter by source
-            <select
-              aria-label="Filter certificates by source"
-              value={sourceFilter}
-              onChange={(event) => setSourceFilter(event.target.value)}
-            >
-              <option value="all">All certificates</option>
-              <option value="gmail">Gmail imports</option>
-              <option value="manual">Manual uploads</option>
-            </select>
-          </label>
-          {loadingVault ? (
-            <div className="empty-state" role="status">
-              Loading your private certificates…
-            </div>
-          ) : visibleCertificates.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">
-                <Award size={30} />
+          {section === "overview" && (
+            <section className="account-overview">
+              <h2>Your private certificate library</h2>
+              <div className="account-stats">
+                <a href="#private-vault">
+                  <span>Certificates in vault</span>
+                  <strong>{total ?? "…"}</strong>
+                </a>
+                <a href="#mailboxes">
+                  <span>Connected mailboxes</span>
+                  <strong>{counts?.mailboxes ?? "—"}</strong>
+                </a>
+                <a href="#approvals">
+                  <span>Awaiting approval</span>
+                  <strong>{counts?.approvals ?? "—"}</strong>
+                </a>
               </div>
-              <h3>Your private vault is ready for its next chapter.</h3>
-              <p>
-                {query
-                  ? "No certificates match this search."
-                  : "No certificates yet. Import availability and setup are shown above; demo certificates are kept separate."}
-              </p>
-            </div>
-          ) : (
-            <div className="certificate-grid">
-              {visibleCertificates.map((c) => (
-                <article key={c.id} className="certificate-card">
-                  <div className="certificate-art blue">
-                    <Award size={36} />
-                    <strong>{c.title}</strong>
-                  </div>
-                  <div className="card-info">
-                    <div className="card-heading">
-                      <h3>{c.title}</h3>
-                      <button
-                        className={`star-button ${c.favorite ? "is-favorite" : ""}`}
-                        aria-label={`${c.favorite ? "Unfavorite" : "Favorite"} ${c.title}`}
-                        aria-pressed={c.favorite}
-                        disabled={busy}
-                        onClick={() =>
-                          action(async () => {
-                            await api(
-                              `/account/certificates/${c.id}/favorite`,
-                              "PUT",
-                              {
-                                value: !c.favorite,
-                              },
-                            );
-                            await refresh();
-                          })
-                        }
-                      >
-                        <Star
-                          size={18}
-                          fill={c.favorite ? "currentColor" : "none"}
-                        />
-                      </button>
-                    </div>
-                    <p>{c.issuer || "Issuer needs review"}</p>
-                    <CertificateVerification id={c.id} />
-                    <a
-                      className="text-button"
-                      target="_blank"
-                      rel="noreferrer"
-                      href={`/api/account/pipeline/certificates/${c.id}/download?inline=true`}
-                    >
-                      <Eye size={14} /> View PDF
-                    </a>
-                    <a
-                      className="text-button"
-                      href={`/api/account/pipeline/certificates/${c.id}/download`}
-                    >
-                      Download private PDF
-                    </a>
-                    <div className="card-bottom">
-                      <span className="tag">{c.category}</span>
-                      <span>
-                        <LockKeyhole size={12} />
-                        Private
-                      </span>
-                    </div>
-                  </div>
-                </article>
-              ))}
-            </div>
-          )}
-          {uploadsEnabled && (
-            <section className="panel account-upload">
-              <h2>Add a certificate PDF</h2>
-              <p className="muted">
-                Files are size-checked, scanned, processed in an isolated parser,
-                and stored privately before appearing in your vault.
-              </p>
-              <label>
-                PDF certificate
-                <input
-                  aria-label="Certificate PDF to upload"
-                  type="file"
-                  accept="application/pdf,.pdf"
-                  disabled={busy}
-                  onChange={(event) => {
-                    const input = event.currentTarget;
-                    const selected = input.files?.[0];
-                    if (!selected) return;
-                    const form = new FormData();
-                    form.append("file", selected);
-                    action(async () => {
-                      const result = await api<{
-                        status: string;
-                        certificate_id: string;
-                      }>("/account/certificates/upload", "POST", form);
-                      setMessage(
-                        result.status === "duplicate"
-                          ? "This certificate is already in your vault; the duplicate was skipped."
-                          : "Certificate uploaded and saved privately.",
-                      );
-                      await refresh();
-                      input.value = "";
-                    });
-                  }}
-                />
-              </label>
+              <a href="#mailboxes">Open Gmail imports →</a>
             </section>
           )}
-          <section className="panel account-preferences">
+          <AccountAutomation
+            onImported={refresh}
+            section={section}
+            onCounts={setCounts}
+          />
+          {section === "organization" && (
+            <AccountOrganization certificates={certs} />
+          )}
+          <div hidden={section !== "private-vault"}>
+            <div className="section-heading">
+              <h2>
+                <span id="private-vault">Your private certificates</span>{" "}
+                <span className="number-pill">{certs.length}</span>
+              </h2>
+            </div>
+            <div className="automation-actions">
+              <Button
+                variant="outline"
+                aria-pressed={favorites}
+                onClick={() => setFavorites(!favorites)}
+              >
+                Favorites only
+              </Button>
+              <Button
+                variant="outline"
+                aria-pressed={list}
+                onClick={() => setList(!list)}
+              >
+                {list ? "Switch to grid" : "Switch to list"}
+              </Button>
+            </div>
+            <label className="search-field account-search">
+              <Search size={18} />
+              <input
+                aria-label="Search development certificates"
+                disabled={busy}
+                maxLength={200}
+                placeholder="Search titles, issuers and extracted text…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </label>
+            <label className="account-source-filter">
+              Filter by source
+              <select
+                aria-label="Filter certificates by source"
+                value={sourceFilter}
+                onChange={(event) => setSourceFilter(event.target.value)}
+              >
+                <option value="all">All certificates</option>
+                <option value="gmail">Gmail imports</option>
+                <option value="manual">Manual uploads</option>
+              </select>
+            </label>
+            {loadingVault ? (
+              <div className="empty-state" role="status">
+                Loading your private certificates…
+              </div>
+            ) : visibleCertificates.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-icon">
+                  <Award size={30} />
+                </div>
+                <h3>Your private vault is ready for its next chapter.</h3>
+                <p>
+                  {query || favorites || sourceFilter !== "all"
+                    ? "No certificates match these filters."
+                    : "No certificates yet. Import availability and setup are shown above; demo certificates are kept separate."}
+                </p>
+              </div>
+            ) : (
+              <div className={list ? "account-cert-list" : "certificate-grid"}>
+                {visibleCertificates.map((c) => (
+                  <article key={c.id} className="certificate-card">
+                    <div className="certificate-art blue">
+                      <Award size={36} />
+                      <strong>{c.title}</strong>
+                    </div>
+                    <div className="card-info">
+                      <div className="card-heading">
+                        <h3>{c.title}</h3>
+                        <button
+                          className={`star-button ${c.favorite ? "is-favorite" : ""}`}
+                          aria-label={`${c.favorite ? "Unfavorite" : "Favorite"} ${c.title}`}
+                          aria-pressed={c.favorite}
+                          disabled={busy}
+                          onClick={() =>
+                            action(async () => {
+                              await api(
+                                `/account/certificates/${c.id}/favorite`,
+                                "PUT",
+                                {
+                                  value: !c.favorite,
+                                },
+                              );
+                              await refresh();
+                            })
+                          }
+                        >
+                          <Star
+                            size={18}
+                            fill={c.favorite ? "currentColor" : "none"}
+                          />
+                        </button>
+                      </div>
+                      <p>{c.issuer || "Issuer needs review"}</p>
+                      <CertificateVerification id={c.id} />
+                      <a
+                        className="text-button"
+                        target="_blank"
+                        rel="noreferrer"
+                        href={`/api/account/pipeline/certificates/${c.id}/download?inline=true`}
+                      >
+                        <Eye size={14} /> View PDF
+                      </a>
+                      <a
+                        className="text-button"
+                        href={`/api/account/pipeline/certificates/${c.id}/download`}
+                      >
+                        Download private PDF
+                      </a>
+                      <div className="card-bottom">
+                        <span className="tag">{c.category}</span>
+                        <span>
+                          <LockKeyhole size={12} />
+                          Private
+                        </span>
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+            {uploadsEnabled && (
+              <section className="panel account-upload">
+                <h2>Add a certificate PDF</h2>
+                <p className="muted">
+                  Files are size-checked, scanned, processed in an isolated
+                  parser, and stored privately before appearing in your vault.
+                </p>
+                <label>
+                  PDF certificate
+                  <input
+                    aria-label="Certificate PDF to upload"
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    disabled={busy}
+                    onChange={(event) => {
+                      const input = event.currentTarget;
+                      const selected = input.files?.[0];
+                      if (!selected) return;
+                      const form = new FormData();
+                      form.append("file", selected);
+                      action(async () => {
+                        const result = await api<{
+                          status: string;
+                          certificate_id: string;
+                        }>("/account/certificates/upload", "POST", form);
+                        setMessage(
+                          result.status === "duplicate"
+                            ? "This certificate is already in your vault; the duplicate was skipped."
+                            : "Certificate uploaded and saved privately.",
+                        );
+                        await refresh();
+                        input.value = "";
+                      });
+                    }}
+                  />
+                </label>
+              </section>
+            )}
+          </div>
+          <section
+            hidden={section !== "preferences"}
+            className="panel account-preferences"
+          >
             <h2>Profile preferences</h2>
             <form
               onSubmit={(e) => {
@@ -448,6 +577,7 @@ export default function DevelopmentAccount() {
                 Auto-download limit (MiB)
                 <input
                   type="number"
+                  step="any"
                   min={1}
                   max={100}
                   required
@@ -455,7 +585,9 @@ export default function DevelopmentAccount() {
                   onChange={(e) =>
                     setProfile({
                       ...profile,
-                      download_limit_bytes: Number(e.target.value) * 1048576,
+                      download_limit_bytes: Math.round(
+                        Number(e.target.value) * 1048576,
+                      ),
                     })
                   }
                 />
@@ -468,6 +600,32 @@ export default function DevelopmentAccount() {
               <Button disabled={busy}>Save development preferences</Button>
             </form>
           </section>
+          <Button
+            variant="outline"
+            disabled={busy}
+            onClick={() =>
+              action(async () => {
+                const r = await api<{
+                  provider_revocation_confirmed: boolean;
+                }>("/account/logout", "POST");
+                refreshVersion.current++;
+                setAuthenticated(false);
+                setCerts([]);
+                setCounts(null);
+                setTotal(null);
+                setQuery("");
+                setSourceFilter("all");
+                setFavorites(false);
+                setMessage(
+                  r.provider_revocation_confirmed
+                    ? "Signed out securely."
+                    : "Signed out here. Provider session revocation could not be confirmed.",
+                );
+              })
+            }
+          >
+            Sign out
+          </Button>
         </>
       )}
     </main>
