@@ -5,6 +5,7 @@ import json
 import uuid
 from contextlib import contextmanager
 
+from apps.api.documents import FORMATS, extension, object_path
 from apps.api.metadata import extract_metadata
 from apps.api.postgres import connect
 
@@ -86,7 +87,7 @@ class PipelineStore:
                     # Preserve history, but retire those pending references on explicit rescan.
                     db.execute(
                         "update private.pipeline_items set status='needs_review',safe_error='legacy_source_reference',updated_at=now() "
-                        "where connection_id=%s and owner_id=%s and attachment_id not like 'part:%%' "
+                        "where connection_id=%s and owner_id=%s and attachment_id not like 'part:%%' and attachment_id not like 'link:%%' "
                         "and status in ('eligible','downloading','scanning','extracting')",
                         (connection, self.owner),
                     )
@@ -197,6 +198,12 @@ class PipelineStore:
 
         status = size_decision(size, threshold, hard_cap=STORAGE_HARD_CAP)
         safe_error = "storage_size_limit_exceeded" if status == "rejected" else None
+        if attachment.startswith("link:"):
+            unsupported = filename == "Issuer link requires manual review"
+            status = "needs_review" if unsupported else "awaiting_approval"
+            safe_error = (
+                "unsupported_issuer_page" if unsupported else "issuer_link_requires_approval"
+            )
         with self.db() as db:
             row = db.execute(
                 "insert into private.pipeline_items(owner_id,connection_id,message_id,attachment_id,filename,declared_bytes,status,safe_error) "
@@ -218,7 +225,7 @@ class PipelineStore:
                     db,
                     "approval:" + str(row["id"]),
                     "approval",
-                    "A certificate exceeds your download limit and needs approval.",
+                    "A certificate download needs approval.",
                 )
             elif row["status"] == "rejected" and row["safe_error"] == "storage_size_limit_exceeded":
                 self.notify(
@@ -288,8 +295,15 @@ class PipelineStore:
                     ),
                 )
                 db.execute(
-                    "insert into public.certificate_files(owner_id,certificate_id,object_path,sha256,mime,bytes,scanned_at) values(%s,%s,%s,%s,'application/pdf',%s,now())",
-                    (self.owner, key, self.owner + "/" + digest + ".pdf", digest, len(data)),
+                    "insert into public.certificate_files(owner_id,certificate_id,object_path,sha256,mime,bytes,scanned_at) values(%s,%s,%s,%s,%s,%s,now())",
+                    (
+                        self.owner,
+                        key,
+                        object_path(self.owner, data),
+                        digest,
+                        FORMATS[extension(data)],
+                        len(data),
+                    ),
                 )
             db.execute(
                 "update private.pipeline_items set status=%s,certificate_id=%s,observed_bytes=%s,safe_error=null,updated_at=now() where id=%s and owner_id=%s",
@@ -346,8 +360,15 @@ class PipelineStore:
                 )
                 db.execute(
                     "insert into public.certificate_files(owner_id,certificate_id,object_path,sha256,mime,bytes,scanned_at) "
-                    "values(%s,%s,%s,%s,'application/pdf',%s,now())",
-                    (self.owner, key, self.owner + "/" + digest + ".pdf", digest, len(data)),
+                    "values(%s,%s,%s,%s,%s,%s,now())",
+                    (
+                        self.owner,
+                        key,
+                        object_path(self.owner, data),
+                        digest,
+                        FORMATS[extension(data)],
+                        len(data),
+                    ),
                 )
             self.notify(
                 db,

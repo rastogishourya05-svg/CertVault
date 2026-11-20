@@ -3,7 +3,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends tesseract-ocr-e
 ENV TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata
 RUN pip install --no-cache-dir PyMuPDF==1.26.7
 WORKDIR /app
-COPY apps/api/__init__.py apps/api/domain.py apps/api/processing.py ./apps/api/
+COPY apps/api/__init__.py apps/api/domain.py apps/api/documents.py apps/api/processing.py ./apps/api/
 COPY infra/parser.py ./parser.py
 USER 65534:65534
 ENTRYPOINT ["python", "-B", "parser.py"]

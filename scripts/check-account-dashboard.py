@@ -1,7 +1,6 @@
 """Exercise local Auth, PostgREST and RLS with two short-lived synthetic accounts."""
 
 import argparse
-import hashlib
 import json
 import os
 import secrets
@@ -46,10 +45,12 @@ def fixture_sql(statement):
 def remove_fixture_pdf(owner, data):
     # The local Storage service performs its own object deletion. Its internal
     # credential stays in that container and is never exported to the app or host.
-    key = f"{uuid.UUID(str(owner))}/{hashlib.sha256(data).hexdigest()}.pdf"
+    from apps.api.documents import object_path
+
+    key = object_path(str(uuid.UUID(str(owner))), data)
     script = r"""
       const path = process.argv[1];
-      if (!/^[a-f0-9-]{36}\/[a-f0-9]{64}\.pdf$/.test(path)) process.exit(2);
+      if (!/^[a-f0-9-]{36}\/[a-f0-9]{64}\.(pdf|png|jpg)$/.test(path)) process.exit(2);
       fetch("http://127.0.0.1:5000/object/certificates/" + path, {
         method: "DELETE", headers: {Authorization: "Bearer " + process.env.SERVICE_KEY}
       }).then(r => {if (!r.ok && r.status !== 404) throw Error("Fixture cleanup HTTP "+r.status)});
@@ -64,6 +65,7 @@ def check(browser):
     if not settings or settings.url != "http://127.0.0.1:54321":
         raise RuntimeError("Local Supabase configuration required.")
     with ExitStack() as stack:
+        owners = []
         users = []
         accounts = []
         for label in "AB":
@@ -73,6 +75,7 @@ def check(browser):
             response = client.post("/account/register", json={"email": email, "password": password})
             assert response.status_code == 201, response.status_code
             owner = uuid.UUID(response.json()["id"])
+            owners.append(owner)
             stack.callback(
                 fixture_sql, f"delete from auth.users where id='{owner}' and email='{email}'"
             )
@@ -124,6 +127,35 @@ def check(browser):
             assert first.delete(membership).is_success
             assert first.get(base).json()[0][relation] == []
         assert first.get("/account/pipeline/status").is_success
+        review = {"title": "Reviewed fixture", "issuer": "Example academy", "category": "Training"}
+        route = f"/account/certificates/{cert}/review"
+        assert other.put(route, json=review).status_code == 404
+        assert first.put(route, json=review).is_success
+        change = {"operation": "trash", "ids": [str(cert)]}
+        assert other.post("/account/vault/bulk", json=change).json()["updated"] == 0
+        assert first.post("/account/vault/bulk", json=change).json()["updated"] == 1
+        assert first.get("/account/certificates").json() == []
+        assert first.get("/account/certificates?trash=true").json()[0]["reviewed_at"]
+        assert first.get(f"/account/pipeline/certificates/{cert}/download").status_code == 404
+        assert (
+            first.post("/account/vault/bulk", json={**change, "operation": "restore"}).json()[
+                "updated"
+            ]
+            == 1
+        )
+        import io
+        import zipfile
+
+        archive = first.post("/account/pipeline/export", json={})
+        assert archive.is_success, archive.status_code
+        with zipfile.ZipFile(io.BytesIO(archive.content)) as bundle:
+            rows = json.loads(bundle.read("certificates.json"))
+            assert [r["id"] for r in rows] == [str(cert)]
+            assert (
+                bundle.read(rows[0]["file"])
+                == first.get(f"/account/pipeline/certificates/{cert}/download").content
+            )
+        assert first.put(route, json={**review, "title": accounts[0]["title"]}).is_success
         if browser:
             fixture = config_root() / f"dashboard-check-{uuid.uuid4().hex}.json"
             write_private(fixture, json.dumps({"accounts": accounts}))
@@ -147,6 +179,72 @@ def check(browser):
                 cwd=Path(__file__).resolve().parents[1] / "apps/web",
                 check=True,
             )
+        import pymupdf
+
+        with pymupdf.open(stream=pdf, filetype="pdf") as source:
+            for fmt, mime in [("png", "image/png"), ("jpeg", "image/jpeg")]:
+                data = source[0].get_pixmap(dpi=150).tobytes(fmt)
+                files = {"file": ("Certificate." + fmt, data, mime)}
+                upload = first.post("/account/certificates/upload", files=files)
+                assert upload.status_code == 200, upload.status_code
+                stack.callback(remove_fixture_pdf, owners[0], data)
+                assert upload.json()["status"] == "stored"
+                assert (
+                    first.post("/account/certificates/upload", files=files).json()["status"]
+                    == "duplicate"
+                )
+                route = (
+                    "/account/pipeline/certificates/"
+                    + upload.json()["certificate_id"]
+                    + "/download"
+                )
+                download = first.get(route)
+                assert download.content == data and download.headers["content-type"] == mime
+                assert other.get(route).status_code == 404
+        import html
+        import re
+        import time
+        from urllib.parse import parse_qs, urlsplit
+
+        import httpx
+
+        email = accounts[0]["email"]
+        assert first.post("/account/recovery/request", json={"email": email}).is_success
+        with httpx.Client(base_url="http://127.0.0.1:54324", trust_env=False) as mail:
+            for _ in range(20):
+                matches = (
+                    mail.get("/api/v1/search", params={"query": "to:" + email})
+                    .raise_for_status()
+                    .json()["messages"]
+                )
+                if matches:
+                    break
+                time.sleep(0.25)
+            msg = next(
+                m
+                for m in matches
+                if any(t["Address"] == email for t in m["To"])
+                and "password" in m["Subject"].lower()
+            )
+            body = mail.get("/api/v1/message/" + msg["ID"]).raise_for_status().json()["HTML"]
+            urls = [
+                parse_qs(urlsplit(html.unescape(u)).query)
+                for u in re.findall(r'href="([^"]+)"', body)
+            ]
+            proof = next(q["token"][0] for q in urls if q.get("type") == ["recovery"])
+            password = secrets.token_urlsafe(32)
+            payload = {"password": password, "token_hash": proof}
+            reset = first.post("/account/recovery/finish", json=payload)
+            assert reset.is_success, reset.status_code
+            assert first.get("/account/certificates").status_code == 401
+            assert not first.post("/account/recovery/finish", json=payload).is_success
+            assert not first.post(
+                "/account/login", json={"email": email, "password": accounts[0]["password"]}
+            ).is_success
+            assert first.post(
+                "/account/login", json={"email": email, "password": password}
+            ).is_success
+            mail.request("DELETE", "/api/v1/messages", json={"IDs": [msg["ID"]]}).raise_for_status()
         for client, _ in users:
             assert client.post("/account/logout").is_success
     print(

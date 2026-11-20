@@ -78,7 +78,7 @@ def validate_url(url: str, allowed_hosts: set[str], resolved_ips: list[str]) -> 
 
 
 def likely_certificate(subject: str, filename: str) -> bool:
-    return filename.lower().endswith(".pdf") and any(
+    return filename.lower().endswith((".pdf", ".png", ".jpg", ".jpeg")) and any(
         word in (subject + " " + filename).lower()
         for word in ("certificate", "credential", "achievement")
     )

@@ -47,19 +47,24 @@ def extract_metadata(text: str, filename: str) -> dict:
     title = values.get("title")
     title_source = "pdf_text" if title else "filename_review"
     if not title:
-        title = re.sub(r"(?i)\.pdf$", "", filename).replace("_", " ").replace("-", " ").strip()
+        title = (
+            re.sub(r"(?i)\.(?:pdf|jpe?g|png)$", "", filename)
+            .replace("_", " ")
+            .replace("-", " ")
+            .strip()
+        )
     if not title:
         title = "Certificate needs review"
 
     searchable = (title + " " + text[:12000]).casefold()
     category = "Other"
     for label, words in (
-        ("Technology", ("software", "programming", "data", "cybersecurity", "cloud")),
+        ("Technology", ("software", "programming", "python", "data", "cybersecurity", "cloud")),
         ("Business", ("leadership", "business", "management", "project manager")),
         ("Safety", ("safety", "first aid", "workplace")),
         ("Education", ("teaching", "education", "academic")),
     ):
-        if any(word in searchable for word in words):
+        if any(re.search(r"\b" + re.escape(word) + r"\b", searchable) for word in words):
             category = label
             break
 

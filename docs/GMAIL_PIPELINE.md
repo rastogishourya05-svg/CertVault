@@ -1,5 +1,13 @@
 # Gmail ingestion development runbook
 
+### Local image and issuer-file imports
+
+Send a synthetic PDF, PNG or JPEG attachment to the dedicated mailbox. Put certificate, credential or achievement in its subject or filename. In the signed-in dashboard choose **Connected mailboxes → Scan now**, then open **Activity**. Repeated scans of the same source reuse its decision. Identical bytes already stored for that owner skip parsing and upload.
+
+For link-only mail, the supported direct-file host is `udemy-certificate.s3.amazonaws.com` with a `/pdf/UC-….pdf` or `/image/UC-….jpg` path. Use **Approval inbox** to authorize the download. Other relevant issuer URLs require manual review. Redirects, signed query strings, nonpublic IP addresses, missing content length and files above 50,000,000 bytes are rejected. OCR and editable metadata describe the document. Issuer verification requires separate evidence.
+
+**My vault** supports field review, category correction, selected-file operations and private ZIP export. The archive contains active originals and a JSON manifest. Use **Trash** to restore files. For a forgotten local account password, choose **Forgot your password?** and follow the link-copy instructions for the local test inbox. Successful recovery invalidates existing app sessions.
+
 ### Signed-in local dashboard
 
 Open `http://127.0.0.1:3000/account`. Use **Connected mailboxes** to start a manual scan and **Activity** to see its results. Completed runs created with migration `20261119070000` record outcomes per unique attachment, including files previously stored. A newly saved file links to its owner-authorized preview. Older scans retain their recorded status. Activity shows the latest 20 runs and 100 recent import items. The approval inbox queries pending decisions separately.
@@ -73,7 +81,7 @@ The local upload-ticket migration and RLS policy have been applied and transacti
 
 ## Current MVP behavior
 
-Scanned PDF support: the isolated parser now tries English OCR when a page has fewer than 30 extracted characters (150 DPI, maximum 3 OCR pages). Existing malware checks, active-action/embedded-file rejection and container limits remain enforced. XML metadata is not interpreted and does not by itself reject a PDF. Standalone images are not imported. OCR and parsing extract information; they do not verify issuer authenticity. A manual rescan retries prior parser-review candidates; identical stored owner hashes avoid redundant parsing/upload.
+Scanned PDF support: the isolated parser now tries English OCR when a page has fewer than 30 extracted characters (150 DPI, maximum 3 OCR pages). Existing malware checks, active-action/embedded-file rejection and container limits remain enforced. XML metadata is not interpreted and does not by itself reject a PDF. Standalone PNG and JPEG certificates now use English OCR in the same parser, with a 12-million-pixel input limit. OCR and parsing extract information; they do not verify issuer authenticity. A manual rescan retries prior parser-review candidates; identical stored owner hashes avoid redundant parsing/upload.
 
 Manual scan recovery: each new explicit Scan now job revisits the connected account's date range, even when a previous scan completed with no candidates. PDFs are listed within that range; certificate, credential or achievement wording may appear in the subject or attachment filename. Source IDs and content hashes prevent repeated storage. Images remain unsupported. The UI explains an empty completed scan and links back to the private vault.
 

@@ -33,3 +33,15 @@ def test_scanned_pdf_ocr_in_restricted_container():
     result = isolated_extract(data, "certvault-parser:dev")
     assert "Python Training" in result
     assert "Synthetic Academy" in result
+
+
+@pytest.mark.parametrize("format", ["png", "jpeg"])
+@pytest.mark.skipif(
+    os.getenv("CERTVAULT_TEST_SECURITY") != "1", reason="Requires isolated OCR parser"
+)
+def test_standalone_image_ocr(format):
+    with pymupdf.open(
+        stream=sample_pdf("Python Training", "Synthetic Academy"), filetype="pdf"
+    ) as source:
+        data = source[0].get_pixmap(dpi=150).tobytes(format)
+    assert "Synthetic Academy" in isolated_extract(data, "certvault-parser:dev")

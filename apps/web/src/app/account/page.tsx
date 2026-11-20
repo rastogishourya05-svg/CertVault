@@ -25,6 +25,12 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import {
+  MetadataReview,
+  PasswordRecovery,
+  Trash,
+  exportFiles,
+} from "@/components/vault-management";
 import { AccountOrganization } from "@/components/account-organization";
 import { AccountAutomation } from "@/components/account-automation";
 import { CertificateVerification } from "@/components/certificate-verification";
@@ -34,6 +40,8 @@ type LiveCertificate = {
   title: string;
   issuer: string | null;
   category: string;
+  reviewed_at?: string | null;
+  recipient?: string | null;
   favorite: boolean;
   source: string;
   issued_on: string | null;
@@ -47,6 +55,7 @@ const sections = [
   ["mailboxes", "Connected mailboxes"],
   ["approvals", "Approval inbox"],
   ["activity", "Activity"],
+  ["trash", "Trash"],
   ["preferences", "Preferences"],
 ] as const;
 const navIcons = {
@@ -56,6 +65,7 @@ const navIcons = {
   mailboxes: Mail,
   approvals: Inbox,
   activity: Activity,
+  trash: Inbox,
   preferences: Settings,
 };
 function watchSection(callback: () => void) {
@@ -76,6 +86,8 @@ export default function DevelopmentAccount() {
     currentSection,
     () => "overview",
   );
+  const [picked, setPicked] = useState<string[]>([]);
+  const [reviewOnly, setReviewOnly] = useState(false);
   const [favorites, setFavorites] = useState(false);
   const [list, setList] = useState(false);
   const [counts, setCounts] = useState<{
@@ -180,6 +192,7 @@ export default function DevelopmentAccount() {
   }
   const visibleCertificates = certs.filter(
     (certificate) =>
+      (!reviewOnly || !certificate.reviewed_at) &&
       (!favorites || certificate.favorite) &&
       (sourceFilter === "all" || certificate.source === sourceFilter),
   );
@@ -323,6 +336,7 @@ export default function DevelopmentAccount() {
                     : "Sign in securely"}
               </Button>
             </form>
+            <PasswordRecovery />
             <button
               className="text-button"
               type="button"
@@ -379,6 +393,7 @@ export default function DevelopmentAccount() {
             section={section}
             onCounts={setCounts}
           />
+          {section === "trash" && <Trash restored={refresh} />}
           {section === "organization" && (
             <AccountOrganization certificates={certs} />
           )}
@@ -404,6 +419,55 @@ export default function DevelopmentAccount() {
               >
                 {list ? "Switch to grid" : "Switch to list"}
               </Button>
+            </div>
+            <div className="automation-actions">
+              <Button
+                variant="outline"
+                aria-pressed={reviewOnly}
+                onClick={() => setReviewOnly(!reviewOnly)}
+              >
+                Needs metadata review
+              </Button>
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => action(() => exportFiles(picked))}
+              >
+                {picked.length ? "Export selected" : "Export active vault"}
+              </Button>
+              {picked.length > 0 && (
+                <>
+                  <span>{picked.length} selected</span>
+                  {(["favorite", "unfavorite", "trash"] as const).map((op) => (
+                    <Button
+                      key={op}
+                      disabled={busy}
+                      variant="outline"
+                      onClick={() =>
+                        action(async () => {
+                          const r = await api<{ updated: number }>(
+                            "/account/vault/bulk",
+                            "POST",
+                            { ids: picked, operation: op },
+                          );
+                          setPicked([]);
+                          await refresh();
+                          setMessage(`Updated ${r.updated} certificates.`);
+                        })
+                      }
+                    >
+                      {op === "trash"
+                        ? "Move selected to Trash"
+                        : op === "favorite"
+                          ? "Favorite selected"
+                          : "Unfavorite selected"}
+                    </Button>
+                  ))}
+                  <Button variant="outline" onClick={() => setPicked([])}>
+                    Clear selection
+                  </Button>
+                </>
+              )}
             </div>
             <label className="search-field account-search">
               <Search size={18} />
@@ -480,6 +544,26 @@ export default function DevelopmentAccount() {
                         </button>
                       </div>
                       <p>{c.issuer || "Issuer needs review"}</p>
+                      <label className="automation-check">
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${c.title}`}
+                          checked={picked.includes(c.id)}
+                          disabled={
+                            busy ||
+                            (!picked.includes(c.id) && picked.length >= 100)
+                          }
+                          onChange={(e) =>
+                            setPicked(
+                              e.target.checked
+                                ? [...picked, c.id]
+                                : picked.filter((id) => id !== c.id),
+                            )
+                          }
+                        />
+                        Select
+                      </label>
+                      <MetadataReview certificate={c} saved={refresh} />
                       <CertificateVerification id={c.id} />
                       <a
                         className="text-button"
@@ -487,13 +571,13 @@ export default function DevelopmentAccount() {
                         rel="noreferrer"
                         href={`/api/account/pipeline/certificates/${c.id}/download?inline=true`}
                       >
-                        <Eye size={14} /> View PDF
+                        <Eye size={14} /> View document
                       </a>
                       <a
                         className="text-button"
                         href={`/api/account/pipeline/certificates/${c.id}/download`}
                       >
-                        Download private PDF
+                        Download private file
                       </a>
                       <div className="card-bottom">
                         <span className="tag">{c.category}</span>
@@ -509,17 +593,17 @@ export default function DevelopmentAccount() {
             )}
             {uploadsEnabled && (
               <section className="panel account-upload">
-                <h2>Add a certificate PDF</h2>
+                <h2>Add a certificate</h2>
                 <p className="muted">
                   Files are size-checked, scanned, processed in an isolated
                   parser, and stored privately before appearing in your vault.
                 </p>
                 <label>
-                  PDF certificate
+                  PDF, PNG or JPEG certificate
                   <input
-                    aria-label="Certificate PDF to upload"
+                    aria-label="Certificate file to upload"
                     type="file"
-                    accept="application/pdf,.pdf"
+                    accept="application/pdf,image/png,image/jpeg,.pdf,.png,.jpg,.jpeg"
                     disabled={busy}
                     onChange={(event) => {
                       const input = event.currentTarget;
@@ -610,6 +694,8 @@ export default function DevelopmentAccount() {
                 }>("/account/logout", "POST");
                 refreshVersion.current++;
                 setAuthenticated(false);
+                setPicked([]);
+                setReviewOnly(false);
                 setCerts([]);
                 setCounts(null);
                 setTotal(null);

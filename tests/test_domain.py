@@ -97,7 +97,7 @@ def test_unsafe_urls(url):
 def test_classifier_ignores_unrelated_mail():
     assert likely_certificate("Your certificate is ready", "award.pdf")
     assert likely_certificate("Your course is complete", "course-certificate.pdf")
-    assert not likely_certificate("Certificate attached", "certificate.png")
+    assert likely_certificate("Certificate attached", "certificate.png")
     assert not likely_certificate("Your monthly statement", "statement.pdf")
     assert not likely_certificate("Certificate attached", "malware.exe")
 

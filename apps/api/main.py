@@ -8,6 +8,9 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.responses import Response as RawResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -52,6 +55,13 @@ app.include_router(account_router)
 app.include_router(pipeline_router)
 app.add_middleware(BodyLimitMiddleware)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"])
+
+
+@app.exception_handler(RequestValidationError)
+async def safe_input_error(request: Request, exc: RequestValidationError):
+    if request.url.path.startswith("/account/"):
+        return JSONResponse({"detail": "One or more account fields are invalid."}, status_code=422)
+    return await request_validation_exception_handler(request, exc)
 
 
 @app.exception_handler(DatabaseError)

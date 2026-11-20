@@ -347,11 +347,87 @@ async def download(
             raise HTTPException(503, "Stored file size mismatch")
     except httpx.RequestError:
         raise HTTPException(503, "Private download unavailable") from None
+    from apps.api.documents import FORMATS, extension
+
+    suffix = extension(data)
     return Response(
         bytes(data),
-        media_type="application/pdf",
+        media_type=FORMATS[suffix],
         headers={
-            "Content-Disposition": f'{"inline" if inline else "attachment"}; filename="certificate.pdf"',
+            "Content-Disposition": f'{"inline" if inline else "attachment"}; filename="certificate{suffix}"',
             "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+class ExportSelection(BaseModel):
+    ids: list[uuid.UUID] = Field(default_factory=list, max_length=100)
+
+
+@router.post("/export")
+async def export_vault(selection: ExportSelection, request: Request, g: Gateway = Depends(gateway)):
+    """Assemble and verify an owner-authorized archive before releasing any bytes."""
+    import tempfile
+    import zipfile
+
+    from starlette.responses import StreamingResponse
+
+    from apps.api.documents import extension
+
+    _, owner, token = await g.identity(request)
+    output = tempfile.TemporaryFile()
+    try:
+        with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_STORED) as archive:
+            offset = 0
+            metadata = []
+            while True:
+                params = {
+                    "owner_id": "eq." + owner,
+                    "trashed_at": "is.null",
+                    "order": "id",
+                    "limit": "100",
+                    "offset": str(offset),
+                    "select": "id,title,issuer,recipient,issued_on,expires_on,category,credential_id,verification_url,source,favorite,reviewed_at,collection_items(collections(name)),certificate_tags(tags(name))",
+                }
+                if selection.ids:
+                    params["id"] = "in.(" + ",".join(map(str, selection.ids)) + ")"
+                rows = await g.request("GET", "/rest/v1/certificates", token=token, params=params)
+                for row in rows:
+                    file = await download(uuid.UUID(row["id"]), request, False, g)
+                    if output.tell() + len(file.body) > 512 * 1024 * 1024:
+                        raise HTTPException(
+                            413,
+                            "Archive exceeds 512 MiB. Select fewer files and export in batches.",
+                        )
+                    name = f"files/{row['id']}{extension(file.body)}"
+                    archive.writestr(name, file.body)
+                    metadata.append({**row, "file": name})
+                offset += len(rows)
+                if len(rows) < 100:
+                    break
+            archive.writestr(
+                "certificates.json", json.dumps(metadata, ensure_ascii=False, indent=2)
+            )
+        output.seek(0)
+    except BaseException:
+        output.close()
+        raise
+
+    def chunks():
+        try:
+            while block := output.read(65536):
+                yield block
+        finally:
+            output.close()
+
+    from starlette.background import BackgroundTask
+
+    return StreamingResponse(
+        chunks(),
+        media_type="application/zip",
+        background=BackgroundTask(output.close),
+        headers={
+            "Content-Disposition": 'attachment; filename="certvault.zip"',
+            "Cache-Control": "no-store",
         },
     )

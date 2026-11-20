@@ -185,15 +185,13 @@ export function AccountAutomation({
         <>
           <p className="muted">
             Connect your test Gmail account, then start each scan yourself.
-            CertVault looks for certificate PDF attachments, checks your
-            download limit, scans each file and saves it privately.
+            CertVault looks for certificate files, checks your download limit,
+            scans each file and saves it privately.
           </p>
           <p className="fine-print">
-            PDF attachments only, including scanned PDFs with English OCR (up to
-            three OCR pages). Separate image attachments and certificate links
-            are not imported yet. Include certificate, credential or achievement
-            in the subject or PDF filename. Each manual scan revisits the
-            connected account’s date range.
+            Import PDF, PNG and JPEG attachments. English OCR reads scanned
+            documents. Supported direct Udemy certificate files require download
+            approval. Other issuer pages need manual review.
           </p>
           <a href="#private-vault">Go to your certificate vault ↓</a>
         </>
@@ -334,10 +332,10 @@ export function AccountAutomation({
                 state.jobs[0].summary &&
                 Object.keys(state.jobs[0].summary).length === 0 && (
                   <p role="status">
-                    Scan finished with no matching certificate PDFs. Check the
-                    connected Gmail address and date range, attach a PDF (not an
-                    image), and include certificate, credential or achievement
-                    in its subject or filename. Then scan again.
+                    Scan finished with no matching certificates. Check the
+                    connected Gmail address and date range, attach a certificate
+                    file (PDF or image), and include certificate, credential or
+                    achievement in its subject or filename. Then scan again.
                   </p>
                 )}
               {state.jobs.length === 0 ? (
@@ -358,7 +356,7 @@ export function AccountAutomation({
                         ·{" "}
                         {Object.entries(j.summary)
                           .map(([key, n]) => n + " " + key.replaceAll("_", " "))
-                          .join(", ") || "0 matching PDFs"}
+                          .join(", ") || "0 matching certificates"}
                       </span>
                     )}
                     {j.status === "completed" && !j.summary && (
@@ -397,7 +395,7 @@ export function AccountAutomation({
                     target="_blank"
                     rel="noreferrer"
                   >
-                    View private PDF
+                    View private file
                   </a>
                 )}
                 <p className="muted">

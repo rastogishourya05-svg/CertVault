@@ -9,6 +9,7 @@ import os
 import secrets
 import time
 import uuid
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -130,8 +131,11 @@ class Gateway:
         except ValueError as exc:
             raise HTTPException(502, "Invalid account service response") from exc
 
-    async def store(self, session_id, tokens, user_id):
+    async def store(self, session_id, tokens, user_id, generation=None):
+        if generation is None:
+            generation = int(await self.sessions.get("cv:auth-version:" + user_id) or 0)
         payload = {
+            "generation": generation,
             "access_token": tokens["access_token"],
             "refresh_token": tokens["refresh_token"],
             "expires_at": time.time() + min(int(tokens.get("expires_in", 3600)), SESSION_TTL),
@@ -168,10 +172,14 @@ class Gateway:
                             params={"grant_type": "refresh_token"},
                             body={"refresh_token": saved["refresh_token"]},
                         )
-                        await self.store(sid, tokens, saved["user_id"])
+                        await self.store(sid, tokens, saved["user_id"], saved.get("generation", 0))
                         saved = await self.load(sid)
             user = await self.request("GET", "/auth/v1/user", token=saved["access_token"])
             user_id = str(uuid.UUID(user["id"]))
+            if int(await self.sessions.get("cv:auth-version:" + user_id) or 0) != saved.get(
+                "generation", 0
+            ):
+                raise HTTPException(401, "Password changed. Please sign in again.")
             if user_id != saved["user_id"]:
                 raise HTTPException(401, "Account session owner mismatch")
             return sid, user_id, saved["access_token"]
@@ -225,12 +233,13 @@ async def upload_certificate(
 ):
     """Validate, scan, and privately store one owner-authorized PDF."""
     _, user_id, token = await g.identity(request)
-    if not file.filename or not file.filename.replace("\\", "/").rsplit("/", 1)[
-        -1
-    ].lower().endswith(".pdf"):
-        raise HTTPException(415, "Choose a PDF certificate file.")
-    if file.content_type not in ("application/pdf", "application/octet-stream"):
-        raise HTTPException(415, "Only PDF certificate files are supported.")
+    from apps.api.documents import FORMATS, matches, object_path
+
+    if not file.filename or Path(file.filename).suffix.lower() not in FORMATS:
+        raise HTTPException(415, "Choose a PDF, PNG or JPEG certificate.")
+    expected = FORMATS[Path(file.filename).suffix.lower()]
+    if file.content_type not in (expected, "application/octet-stream"):
+        raise HTTPException(415, "File type does not match its extension.")
 
     from apps.api.domain import STORAGE_HARD_CAP, PolicyError
     from apps.api.pipeline import PrivateStorage, StorageLimitExceeded
@@ -247,12 +256,12 @@ async def upload_certificate(
         if len(content) + len(chunk) > STORAGE_HARD_CAP:
             raise HTTPException(
                 413,
-                "This PDF exceeds the 50 MB (50,000,000-byte) local Storage limit and was not saved.",
+                "This document exceeds the 50 MB (50,000,000-byte) local Storage limit and was not saved.",
             )
         content.extend(chunk)
     data = bytes(content)
-    if not data.startswith(b"%PDF-"):
-        raise HTTPException(415, "The selected file is not a valid PDF.")
+    if not matches(file.filename, data):
+        raise HTTPException(415, "File contents do not match the selected type.")
 
     store = PipelineStore(pipeline.database_url.get_secret_value(), user_id)
     if store.find_certificate_hash(data):
@@ -265,13 +274,13 @@ async def upload_certificate(
         text = await asyncio.to_thread(isolated_extract, data, pipeline.parser_image)
     except ScannerUnavailable:
         raise HTTPException(
-            503, "Malware scanning or isolated PDF processing is unavailable."
+            503, "Malware scanning or isolated document processing is unavailable."
         ) from None
     except PolicyError:
-        raise HTTPException(422, "This PDF was rejected or needs manual review.") from None
+        raise HTTPException(422, "This document was rejected or needs manual review.") from None
 
     filename = file.filename.replace("\\", "/").rsplit("/", 1)[-1][:160]
-    path = user_id + "/" + __import__("hashlib").sha256(data).hexdigest() + ".pdf"
+    path = object_path(user_id, data)
     try:
         store.issue_storage_upload(path)
         await PrivateStorage(
@@ -281,7 +290,7 @@ async def upload_certificate(
     except StorageLimitExceeded:
         raise HTTPException(
             413,
-            "Supabase Storage rejected this PDF at its 50 MB limit. It was not added to your vault.",
+            "Supabase Storage rejected this document at its 50 MB limit. It was not added to your vault.",
         ) from None
     except ScannerUnavailable:
         raise HTTPException(
@@ -473,13 +482,14 @@ async def certificates(
     request: Request,
     q: str = Query(default="", max_length=200),
     offset: int = Query(default=0, ge=0),
+    trash: bool = False,
     g: Gateway = Depends(gateway),
 ):
     _, user_id, token = await g.identity(request)
     params = {
         "owner_id": "eq." + user_id,
-        "trashed_at": "is.null",
-        "select": "id,title,issuer,category,source,favorite,issued_on,created_at",
+        "trashed_at": "not.is.null" if trash else "is.null",
+        "select": "id,title,issuer,category,source,favorite,issued_on,created_at,recipient,reviewed_at",
         "order": "created_at.desc,id.desc",
         "limit": "100",
         "offset": str(offset),
@@ -596,4 +606,116 @@ async def group_membership(
         await g.request(
             "POST", f"/rest/v1/{table}", token=token, body=membership, ignore_duplicates=True
         )
+    return {"ok": True}
+
+
+class ReviewFields(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    title: str = Field(min_length=1, max_length=160)
+    issuer: str | None = Field(default=None, max_length=120)
+    recipient: str | None = Field(default=None, max_length=120)
+    issued_on: date | None = None
+    category: str = Field(min_length=1, max_length=80)
+
+
+@router.put("/certificates/{key}/review")
+async def review(
+    key: uuid.UUID, body: ReviewFields, request: Request, g: Gateway = Depends(gateway)
+):
+    _, owner, token = await g.identity(request)
+    fields = body.model_dump(mode="json")
+    fields["reviewed_at"] = datetime.now(UTC).isoformat()
+    rows = await g.request(
+        "PATCH",
+        "/rest/v1/certificates",
+        token=token,
+        body=fields,
+        params={
+            "owner_id": "eq." + owner,
+            "id": "eq." + str(key),
+            "trashed_at": "is.null",
+            "select": "id",
+        },
+    )
+    if not rows:
+        raise HTTPException(404, "Certificate unavailable")
+    return {"ok": True}
+
+
+class BulkChange(BaseModel):
+    ids: list[uuid.UUID] = Field(min_length=1, max_length=100)
+    operation: Literal["trash", "restore", "favorite", "unfavorite"]
+
+
+@router.post("/vault/bulk")
+async def vault_bulk(body: BulkChange, request: Request, g: Gateway = Depends(gateway)):
+    _, owner, token = await g.identity(request)
+    changes = {
+        "trash": {"trashed_at": datetime.now(UTC).isoformat()},
+        "restore": {"trashed_at": None},
+        "favorite": {"favorite": True},
+        "unfavorite": {"favorite": False},
+    }
+    rows = await g.request(
+        "PATCH",
+        "/rest/v1/certificates",
+        token=token,
+        body=changes[body.operation],
+        params={
+            "owner_id": "eq." + owner,
+            "id": "in.(" + ",".join(map(str, body.ids)) + ")",
+            "trashed_at": "not.is.null" if body.operation == "restore" else "is.null",
+            "select": "id",
+        },
+    )
+    return {"updated": len(rows)}
+
+
+class RecoveryEmail(BaseModel):
+    email: str = Field(max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+class RecoveryFinish(BaseModel):
+    token_hash: SecretStr
+    password: SecretStr = Field(min_length=12, max_length=128)
+
+
+async def recovery_limit(g, key):
+    attempts = await g.sessions.incr(key)
+    if attempts == 1:
+        await g.sessions.expire(key, 600)
+    if attempts > 10:
+        raise HTTPException(429, "Too many recovery attempts. Try again later.")
+
+
+@router.post("/recovery/request")
+async def request_recovery(body: RecoveryEmail, g: Gateway = Depends(gateway)):
+    from apps.api.domain import digest
+
+    email = body.email.strip().casefold()
+    await recovery_limit(g, "cv:recovery:" + digest(email.encode()))
+    await g.request("POST", "/auth/v1/recover", body={"email": email})
+    return {"ok": True}
+
+
+@router.post("/recovery/finish")
+async def finish_recovery(body: RecoveryFinish, g: Gateway = Depends(gateway)):
+    await recovery_limit(g, "cv:local-recovery-attempts")
+    proof = body.token_hash.get_secret_value()
+    if not 20 <= len(proof) <= 256:
+        raise HTTPException(422, "Invalid recovery proof")
+    result = await g.request(
+        "POST", "/auth/v1/verify", body={"token_hash": proof, "type": "recovery"}
+    )
+    access = result["access_token"]
+    try:
+        changed = await g.request(
+            "PUT",
+            "/auth/v1/user",
+            token=access,
+            body={"password": body.password.get_secret_value()},
+        )
+        await g.sessions.incr("cv:auth-version:" + str(uuid.UUID(changed["id"])))
+    finally:
+        await g.request("POST", "/auth/v1/logout", token=access)
     return {"ok": True}

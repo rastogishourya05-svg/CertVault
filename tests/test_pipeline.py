@@ -75,8 +75,15 @@ def scenario(
     declared_size=None,
     storage_limit_rejected=False,
     rotating_attachment_ids=False,
+    issuer_link=None,
+    image_attachment=False,
 ):
     pdf = sample_pdf("Pipeline security fixture", "Synthetic issuer")
+    if image_attachment:
+        import pymupdf
+
+        with pymupdf.open(stream=pdf, filetype="pdf") as document:
+            pdf = document[0].get_pixmap(dpi=150).tobytes("png")
     if unknown:
         pdf += b"\n" * (2 * 1048576)
     requests, stored = [], {}
@@ -113,10 +120,21 @@ def scenario(
                         ],
                         "parts": [
                             {
+                                "mimeType": "text/plain",
+                                "body": {
+                                    "data": base64.urlsafe_b64encode(issuer_link.encode()).decode()
+                                },
+                            }
+                        ]
+                        if issuer_link and not path.endswith("unrelated")
+                        else [
+                            {
                                 "filename": "lunch.pdf"
                                 if path.endswith("unrelated")
+                                else "credential.png"
+                                if image_attachment
                                 else "credential.pdf",
-                                "mimeType": "application/pdf",
+                                "mimeType": "image/png" if image_attachment else "application/pdf",
                                 "body": {
                                     "attachmentId": "file" + str(len(requests))
                                     if rotating_attachment_ids
@@ -650,3 +668,57 @@ def test_rotating_gmail_download_tokens_do_not_create_new_sources(pipeline):
     assert snapshot["imports"][0]["status"] == "stored"
     assert sum("/attachments/" in r.url.path for r in requests) == 1
     assert len(objects) == 1
+
+
+def test_issuer_link_requires_approval_before_import(pipeline, monkeypatch):
+    from apps.api import issuer_files
+
+    config, store, connection, other = pipeline
+    url = "https://udemy-certificate.s3.amazonaws.com/pdf/UC-test1234.pdf"
+    run, _, objects, pdf = scenario(config, store, connection, issuer_link=url)
+    fetched = []
+
+    def fetch(value):
+        fetched.append(value)
+        return pdf
+
+    monkeypatch.setattr(issuer_files, "fetch_file", fetch)
+    asyncio.run(run(store.enqueue(connection)))
+    item = store.snapshot()["imports"][0]
+    assert item["status"] == "awaiting_approval" and not fetched
+    assert PipelineStore(store.dsn, other).decide(item["id"], True) is None
+    assert store.decide(item["id"], True)
+    asyncio.run(run(store.enqueue(connection)))
+    assert fetched == [url] and list(objects.values()) == [pdf]
+    asyncio.run(run(store.enqueue(connection)))
+    assert fetched == [url]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://127.0.0.1/verify",
+        "https://udemy-certificate.s3.amazonaws.com.example.com/pdf/UC-test.pdf",
+        "https://udemy-certificate.s3.amazonaws.com/pdf/UC-test.pdf?redirect=1",
+    ],
+)
+def test_unsupported_link_never_resolves(url, monkeypatch):
+    from apps.api import issuer_files
+
+    monkeypatch.setattr(
+        issuer_files.socket, "getaddrinfo", lambda *a, **kw: pytest.fail("unexpected lookup")
+    )
+    with pytest.raises(ValueError):
+        issuer_files.fetch_file(url)
+
+
+def test_mail_image_rescan_preserves_single_private_file(pipeline):
+    config, store, connection, _ = pipeline
+    run, requests, objects, data = scenario(config, store, connection, image_attachment=True)
+    asyncio.run(run(store.enqueue(connection)))
+    assert store.snapshot()["imports"][0]["status"] == "stored"
+    assert len(objects) == 1 and next(iter(objects)).endswith(".png")
+    assert next(iter(objects.values())) == data
+    downloads = sum("/attachments/" in r.url.path for r in requests)
+    asyncio.run(run(store.enqueue(connection)))
+    assert sum("/attachments/" in r.url.path for r in requests) == downloads

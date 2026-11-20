@@ -61,3 +61,43 @@ def extract_pdf(data: bytes, *, ocr=False) -> str:
         raise
     except Exception as exc:
         raise PolicyError("Malformed PDF; unable to safely extract text") from exc
+
+
+def extract_document(data: bytes, *, ocr: bool) -> str:
+    """Decode images only inside the same resource-limited parser used for PDFs."""
+    from apps.api.documents import extension
+
+    if extension(data) == ".pdf":
+        return extract_pdf(data, ocr=ocr)
+    import struct
+
+    if extension(data) == ".png":
+        width, height = struct.unpack_from(">II", data, 16)
+    else:
+        cursor = 2
+        width = height = 0
+        while cursor + 4 <= len(data) and data[cursor] == 0xFF:
+            cursor += 1
+            while cursor < len(data) and data[cursor] == 0xFF:
+                cursor += 1
+            marker = data[cursor]
+            size = int.from_bytes(data[cursor + 1 : cursor + 3], "big")
+            if marker in (0xC0, 0xC1, 0xC2):
+                height, width = struct.unpack_from(">HH", data, cursor + 4)
+                break
+            if size < 2 or marker in (0xDA, 0xD9):
+                break
+            cursor += 1 + size
+    if not 0 < width * height <= 12_000_000:
+        raise PolicyError("Unsupported image dimensions")
+    pix = pymupdf.Pixmap(data)
+    if pix.alpha:
+        pix = pymupdf.Pixmap(pix, 0)
+    if pix.colorspace and pix.colorspace.n != 3:
+        pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
+    pdf = pix.pdfocr_tobytes(language="eng")
+    with pymupdf.open(stream=pdf, filetype="pdf") as document:
+        text = document[0].get_text()[:50000].strip()
+    if not text:
+        raise PolicyError("No readable certificate text found")
+    return text

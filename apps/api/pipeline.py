@@ -2,12 +2,13 @@
 
 import asyncio
 import base64
-import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 
 import httpx
 
+from apps.api import issuer_files
+from apps.api.documents import FORMATS, extension, matches, object_path
 from apps.api.domain import (
     STORAGE_HARD_CAP as HARD_CAP,
 )
@@ -54,11 +55,15 @@ class PrivateStorage:
 
     async def upload(self, owner, data):
         enforce_storage_limit(data)
-        path = owner + "/" + hashlib.sha256(data).hexdigest() + ".pdf"
+        path = object_path(owner, data)
         try:
             response = await self.client.post(
                 self.url + "/storage/v1/object/certificates/" + path,
-                headers={**self.headers, "Content-Type": "application/pdf", "x-upsert": "false"},
+                headers={
+                    **self.headers,
+                    "Content-Type": FORMATS[extension(data)],
+                    "x-upsert": "false",
+                },
                 content=data,
                 timeout=45,
                 follow_redirects=False,
@@ -104,9 +109,20 @@ def parts(payload):
         count += 1
         if count > 200:
             raise PolicyError("Message MIME structure requires review")
-        if part.get("filename") and part.get("mimeType") == "application/pdf":
+        if part.get("filename") and part.get("mimeType") in FORMATS.values():
             yield part
         pending.extend(part.get("parts", [])[:200])
+
+
+def attachment_parts(payload):
+    # Preserve the original PDF fallback index for older messages without Gmail partId.
+    counters = {"application/pdf": 0, "image/png": 0, "image/jpeg": 0}
+    for part in parts(payload):
+        mime = part["mimeType"]
+        index = counters[mime]
+        counters[mime] += 1
+        fallback = str(index) if mime == "application/pdf" else f"{mime}:{index}"
+        yield "part:" + str(part.get("partId", fallback)), part
 
 
 async def access(config, store, connection, http):
@@ -143,20 +159,57 @@ async def process_item(
     store.item_state(item["id"], "downloading")
     try:
         attachment_id = item["attachment_id"]
-        if attachment_id.startswith("part:"):
+        if attachment_id.startswith("link:"):
+            if not approved:
+                store.item_state(item["id"], "awaiting_approval", "issuer_link_requires_approval")
+                return
+            source = await adapter.message(item["message_id"])
+            links = issuer_files.message_links(source.get("payload", {}), "")
+            if attachment_id not in links:
+                raise issuer_files.LinkUnavailable()
+            data = await asyncio.to_thread(issuer_files.fetch_file, links[attachment_id][1])
+        elif attachment_id.startswith("part:"):
             message = await adapter.message(item["message_id"])
-            attachment_id = next(
+            part = next(
                 (
-                    part.get("body", {}).get("attachmentId")
-                    for index, part in enumerate(parts(message.get("payload", {})))
-                    if "part:" + str(part.get("partId", index)) == item["attachment_id"]
+                    p
+                    for key, p in attachment_parts(message.get("payload", {}))
+                    if key == attachment_id
                 ),
                 None,
             )
-            if not attachment_id:
+            if not part:
                 store.item_state(item["id"], "needs_review", "attachment_no_longer_available")
                 return
-        data = await adapter.attachment(item["message_id"], attachment_id, threshold, approved)
+            body = part.get("body", {})
+            attachment_id = body.get("attachmentId")
+            if not attachment_id:
+                raw = body.get("data", "")
+                limit = HARD_CAP if approved else min(threshold, HARD_CAP)
+                if len(raw) > ((limit + 2) // 3) * 4:
+                    if approved:
+                        raise HardLimitExceeded()
+                    raise PolicyError("Image exceeds threshold")
+                try:
+                    data = base64.b64decode(
+                        raw + "=" * (-len(raw) % 4), altchars=b"-_", validate=True
+                    )
+                except ValueError:
+                    store.item_state(item["id"], "needs_review", "invalid_attachment_encoding")
+                    return
+                if len(data) > HARD_CAP:
+                    raise HardLimitExceeded()
+                if len(data) > limit:
+                    raise PolicyError("Attachment exceeds threshold")
+            else:
+                data = await adapter.attachment(
+                    item["message_id"], attachment_id, threshold, approved
+                )
+        else:
+            data = await adapter.attachment(item["message_id"], attachment_id, threshold, approved)
+    except issuer_files.LinkUnavailable:
+        store.item_state(item["id"], "needs_review", "issuer_link_unavailable_or_requires_sign_in")
+        return
     except HardLimitExceeded:
         store.item_state(item["id"], "rejected", "storage_size_limit_exceeded")
         return
@@ -167,7 +220,7 @@ async def process_item(
             "hard_cap" if approved else "observed_size_exceeded",
         )
         return
-    if not data or len(data) > HARD_CAP or not data.startswith(b"%PDF-"):
+    if not data or len(data) > HARD_CAP or not matches(item["filename"], data):
         store.item_state(item["id"], "needs_review", "unsupported_content")
         return
     if store.find_certificate_hash(data):
@@ -194,7 +247,7 @@ async def process_item(
     if not store.connection(connection["id"]):
         return
     try:
-        path = store.owner + "/" + hashlib.sha256(data).hexdigest() + ".pdf"
+        path = object_path(store.owner, data)
         store.issue_storage_upload(path)
         await storage.upload(store.owner, data)
     except StorageLimitExceeded:
@@ -322,21 +375,26 @@ async def _page(config, store, job, http, storage, scan_file, parse_file):
             ),
             "",
         )
-        for part_index, part in enumerate(parts(payload)):
+        candidates = []
+        for source_id, part in attachment_parts(payload):
             filename, body = part["filename"], part.get("body", {})
-            if not likely_certificate(subject, filename):
-                continue
-            # Inline MIME payloads are deliberately review-only until a streaming adapter exists.
-            attachment = body.get("attachmentId")
-            if not attachment:
+            if not likely_certificate(subject, filename) or not (
+                body.get("attachmentId") or body.get("data")
+            ):
                 continue
             size = body.get("size")
-            if size is not None and (not isinstance(size, int) or isinstance(size, bool)):
+            if not isinstance(size, int) or isinstance(size, bool):
                 size = None
+            candidates.append((source_id, filename, size))
+        candidates.extend(
+            (key, name, None)
+            for key, (name, _) in issuer_files.message_links(payload, subject).items()
+        )
+        for source_id, filename, size in candidates:
             item = store.discover(
                 connection_id,
                 reference["id"],
-                "part:" + str(part.get("partId", part_index)),
+                source_id,
                 filename,
                 size,
                 threshold,

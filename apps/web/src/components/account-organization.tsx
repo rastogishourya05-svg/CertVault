@@ -192,7 +192,7 @@ export function AccountOrganization({
                     target="_blank"
                     rel="noreferrer"
                   >
-                    View PDF
+                    View document
                   </a>
                 </div>
               );

@@ -41,11 +41,31 @@ test("approved temporary Supabase account signs in, reads private vault and sign
   ).toHaveCount(0);
   if (process.env.CERTVAULT_ACCOUNT_FIXTURE) {
     const pdf = await page
-      .getByRole("link", { name: "View PDF", exact: true })
+      .getByRole("link", { name: "View document", exact: true })
       .getAttribute("href");
     const response = await page.request.get(pdf!);
     expect(response.status()).toBe(200);
     expect((await response.body()).subarray(0, 5).toString()).toBe("%PDF-");
+    await page
+      .getByRole("button", {
+        name: /review extracted details|edit reviewed details/i,
+      })
+      .click();
+    await page.getByLabel("Category", { exact: true }).fill("Workshop");
+    await page.getByRole("button", { name: "Save reviewed details" }).click();
+    await expect(
+      page.getByRole("button", { name: "Edit reviewed details" }),
+    ).toBeVisible();
+    await page.getByLabel("Select " + account.title, { exact: true }).check();
+    const downloaded = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Export selected" }).click();
+    expect((await downloaded).suggestedFilename()).toBe("certvault.zip");
+    await page.getByRole("button", { name: "Move selected to Trash" }).click();
+    await expect(page.getByText("Updated 1 certificates.")).toBeVisible();
+    await page.getByRole("link", { name: "Trash", exact: true }).click();
+    await page.getByRole("checkbox", { name: account.title }).check();
+    await page.getByRole("button", { name: "Restore selected" }).click();
+    await expect(page.getByText("Trash is empty.")).toBeVisible();
     await page.getByRole("link", { name: "Collections & tags" }).click();
     await page.getByLabel("New collection name").fill("Presentation");
     await page.getByRole("button", { name: "Create collection" }).click();

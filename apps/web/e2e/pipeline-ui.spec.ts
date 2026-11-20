@@ -132,7 +132,6 @@ test("mocked automation activity requires consent and handles per-file approval 
   ).toBe(false);
   expect(browserErrors).toEqual([]);
   expect(failedRequests).toEqual([]);
-
 });
 
 test("empty completed scan explains PDF rules and navigates to vault", async ({
@@ -167,7 +166,7 @@ test("empty completed scan explains PDF rules and navigates to vault", async ({
   });
   await page.goto("/account#activity");
   await expect(
-    page.getByText(/Scan finished with no matching certificate PDFs/),
+    page.getByText(/Scan finished with no matching certificates/),
   ).toBeVisible();
   await page.getByRole("link", { name: "My vault", exact: true }).click();
   await expect(page).toHaveURL(/#private-vault$/);
