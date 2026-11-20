@@ -139,6 +139,10 @@ def check(browser):
         assert [row["id"] for row in first.get("/account/certificates?q=Syntheticname").json()] == [
             str(cert)
         ]
+        # This partial phrase appears only in the document body.
+        for account_client, own_cert in users:
+            result = account_client.get("/account/certificates", params={"q": "authentic creden"})
+            assert result.is_success and [row["id"] for row in result.json()] == [str(own_cert)]
         change = {"operation": "trash", "ids": [str(cert)]}
         assert other.post("/account/vault/bulk", json=change).json()["updated"] == 0
         assert first.post("/account/vault/bulk", json=change).json()["updated"] == 1

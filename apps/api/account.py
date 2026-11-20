@@ -6,6 +6,7 @@ This module does not enable production ingestion or use a service-role key.
 import asyncio
 import json
 import os
+import re
 import secrets
 import time
 import uuid
@@ -497,7 +498,15 @@ async def certificates(
     if q.strip():
         # Quote the value so punctuation remains inside the PostgREST operand.
         term = q.strip().replace(chr(92), chr(92) * 2).replace('"', chr(92) + '"')
-        params["or"] = f'(search_document.wfts(simple)."{term}",recipient.wfts(simple)."{term}")'
+        filters = [f'search_document.wfts(simple)."{term}"', f'recipient.wfts(simple)."{term}"']
+        # OCR can split phrases across lines or join words into one indexed token.
+        # Build the fallback from letters and digits so user punctuation cannot
+        # introduce filter syntax or wildcard-only scans.
+        words = re.findall(r"[^\W_]+", q, re.UNICODE)
+        if words:
+            pattern = "%" + "%".join(words) + "%"
+            filters.append(f'extracted_text.ilike."{pattern}"')
+        params["or"] = "(" + ",".join(filters) + ")"
     return await g.request("GET", "/rest/v1/certificates", token=token, params=params)
 
 
