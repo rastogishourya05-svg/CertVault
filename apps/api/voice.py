@@ -25,6 +25,27 @@ def api_key():
         return ""
 
 
+def provider_error(response: httpx.Response) -> str:
+    try:
+        detail = response.json().get("detail")
+    except (ValueError, AttributeError):
+        detail = None
+    reason = detail.get("status") if isinstance(detail, dict) else None
+    if reason == "quota_exceeded" or response.status_code == 402:
+        return "ElevenLabs reports a quota or billing limit. Check the workspace credit balance and this API key's credit cap."
+    if reason == "missing_permissions":
+        return "ElevenLabs denied permission. Enable Speech to Text access on the API key used by CertVault."
+    if reason == "invalid_api_key":
+        return "ElevenLabs rejected the API key. Save a valid key using the local configure-voice command."
+    if response.status_code in (401, 403):
+        return "ElevenLabs denied access. Check the key, Speech to Text permission and workspace restrictions."
+    if response.status_code == 429:
+        return "ElevenLabs is rate-limiting requests. Wait a minute before retrying."
+    if response.status_code in (400, 422):
+        return "ElevenLabs rejected the transcription request. Cancel dictation and try a new short recording."
+    return "ElevenLabs transcription is unavailable. Try later or use typed search."
+
+
 @router.get("/status")
 async def status(request: Request, g: Gateway = Depends(gateway)):
     await g.identity(request)
@@ -74,10 +95,7 @@ async def transcribe(request: Request, g: Gateway = Depends(gateway)):
             follow_redirects=False,
         )
         if response.status_code != 200:
-            raise HTTPException(
-                503,
-                "Transcription unavailable. Check the server key or ElevenLabs quota, or type instead.",
-            )
+            raise HTTPException(503, provider_error(response))
         text = response.json().get("text")
         if not isinstance(text, str) or not text.strip():
             raise HTTPException(422, "No speech recognized. Try again or type instead.")

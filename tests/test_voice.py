@@ -92,3 +92,23 @@ def test_rate_limit_and_upstream_errors(service):
     assert client.post(path, headers=headers, content=b"00").status_code == 503
     state.update(status=200, text="")
     assert client.post(path, headers=headers, content=b"00").status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("status", "reason", "expected"),
+    [
+        (401, "quota_exceeded", "credit cap"),
+        (401, "missing_permissions", "Enable Speech to Text"),
+        (401, "invalid_api_key", "Save a valid key"),
+        (403, None, "denied access"),
+        (429, None, "Wait a minute"),
+        (422, None, "new short recording"),
+        (500, None, "Try later"),
+    ],
+)
+def test_provider_errors_are_actionable_and_redacted(status, reason, expected):
+    response = httpx.Response(
+        status, json={"detail": {"status": reason, "message": "sensitive-provider-content"}}
+    )
+    message = voice.provider_error(response)
+    assert expected in message and "sensitive-provider-content" not in message
