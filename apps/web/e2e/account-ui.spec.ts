@@ -39,7 +39,18 @@ test("account favorite preserves nullable issuer and searches preserve unsaved p
       favoritePayload = request.postDataJSON();
       certificate.favorite = true;
       body = { ok: true };
-    } else if (path.endsWith("/certificates")) body = [certificate];
+    } else if (path.endsWith("/certificates"))
+      body = [
+        {
+          ...certificate,
+          certificate_files: [{ mime: "application/pdf", bytes: 236406 }],
+        },
+        {
+          ...certificate,
+          id: "22222222-2222-4222-8222-222222222222",
+          certificate_files: [{ mime: "image/jpeg", bytes: 236413 }],
+        },
+      ];
     else throw new Error(`Unexpected mocked account route ${path}`);
     await route.fulfill({
       status: 200,
@@ -57,14 +68,20 @@ test("account favorite preserves nullable issuer and searches preserve unsaved p
   await expect(
     page.getByText("Protocol fixture", { exact: true }).first(),
   ).toBeVisible();
+  await expect(page.getByText(/Same title as another file/)).toHaveCount(2);
+  await expect(page.getByText(/PDF.*236,406 bytes/)).toBeVisible();
+  await expect(page.getByText(/JPEG.*236,413 bytes/)).toBeVisible();
   await page
     .getByRole("button", { name: "Favorite Protocol fixture", exact: true })
+    .first()
     .click();
   await expect(
-    page.getByRole("button", {
-      name: "Unfavorite Protocol fixture",
-      exact: true,
-    }),
+    page
+      .getByRole("button", {
+        name: "Unfavorite Protocol fixture",
+        exact: true,
+      })
+      .first(),
   ).toBeVisible();
   expect(favoritePayload).toEqual({ value: true });
   await page.getByRole("link", { name: "Preferences", exact: true }).click();

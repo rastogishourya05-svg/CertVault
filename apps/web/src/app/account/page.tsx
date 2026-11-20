@@ -36,6 +36,7 @@ import { AccountAutomation } from "@/components/account-automation";
 import { CertificateVerification } from "@/components/certificate-verification";
 
 type LiveCertificate = {
+  certificate_files?: { mime: string; bytes: number }[];
   id: string;
   title: string;
   issuer: string | null;
@@ -189,6 +190,11 @@ export default function DevelopmentAccount() {
     } finally {
       setBusy(false);
     }
+  }
+  const titleCounts = new Map<string, number>();
+  for (const certificate of certs) {
+    const title = certificate.title.trim().toLowerCase();
+    titleCounts.set(title, (titleCounts.get(title) ?? 0) + 1);
   }
   const visibleCertificates = certs.filter(
     (certificate) =>
@@ -544,6 +550,19 @@ export default function DevelopmentAccount() {
                         </button>
                       </div>
                       <p>{c.issuer || "Issuer needs review"}</p>
+                      {c.certificate_files?.map((file, index) => (
+                        <p key={index}>
+                          {file.mime.split("/")[1]?.toUpperCase()} ·{" "}
+                          {file.bytes.toLocaleString()} bytes
+                        </p>
+                      ))}
+                      {(titleCounts.get(c.title.trim().toLowerCase()) ?? 0) >
+                        1 && (
+                        <p className="muted">
+                          Same title as another file. Compare the originals
+                          before moving a copy to Trash.
+                        </p>
+                      )}
                       <label className="automation-check">
                         <input
                           type="checkbox"
@@ -564,21 +583,26 @@ export default function DevelopmentAccount() {
                         Select
                       </label>
                       <MetadataReview certificate={c} saved={refresh} />
-                      <CertificateVerification id={c.id} />
-                      <a
-                        className="text-button"
-                        target="_blank"
-                        rel="noreferrer"
-                        href={`/api/account/pipeline/certificates/${c.id}/download?inline=true`}
-                      >
-                        <Eye size={14} /> View document
-                      </a>
-                      <a
-                        className="text-button"
-                        href={`/api/account/pipeline/certificates/${c.id}/download`}
-                      >
-                        Download private file
-                      </a>
+                      <CertificateVerification
+                        key={[c.id, c.reviewed_at].join("/")}
+                        id={c.id}
+                      />
+                      <div className="private-file-links">
+                        <a
+                          className="text-button"
+                          target="_blank"
+                          rel="noreferrer"
+                          href={`/api/account/pipeline/certificates/${c.id}/download?inline=true`}
+                        >
+                          <Eye size={14} /> View document
+                        </a>
+                        <a
+                          className="text-button"
+                          href={`/api/account/pipeline/certificates/${c.id}/download`}
+                        >
+                          Download private file
+                        </a>
+                      </div>
                       <div className="card-bottom">
                         <span className="tag">{c.category}</span>
                         <span>

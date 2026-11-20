@@ -9,7 +9,7 @@ _FIELD = {
     ),
     "issuer": re.compile(r"^(?:issuer|issued by|provided by|awarded by)\s*:\s*(.{2,120})$", re.I),
     "recipient": re.compile(
-        r"^(?:awarded to|presented to|recipient|learner)\s*:\s*(.{2,120})$", re.I
+        r"^(?:awarded to|presented to|issued to|recipient|learner)\s*:\s*(.{2,120})$", re.I
     ),
     "date": re.compile(
         r"^(?:issue date|issued on|date issued|completion date)\s*:\s*(.{3,40})$", re.I
@@ -27,8 +27,23 @@ _DATE_FORMATS = (
 def extract_metadata(text: str, filename: str) -> dict:
     """Extract explicit labeled values only; preserve filename fallback provenance."""
     values = {}
-    for line in text.splitlines()[:500]:
+    lines = [
+        " ".join(line.split()).strip(" •·") for line in text.splitlines()[:500] if line.strip()
+    ]
+    for index, line in enumerate(lines):
         clean = " ".join(line.split()).strip(" \t•·")
+        # OCR commonly places the label and its value on separate lines.
+        if index + 1 < len(lines) and not any(
+            pattern.fullmatch(clean) for pattern in _FIELD.values()
+        ):
+            candidate = lines[index + 1]
+            if not any(
+                pattern.match(candidate.rstrip(":") + ": value") or pattern.match(candidate)
+                for pattern in _FIELD.values()
+            ):
+                combined = clean.rstrip(":") + ": " + candidate
+                if any(pattern.fullmatch(combined) for pattern in _FIELD.values()):
+                    clean = combined
         for field, pattern in _FIELD.items():
             match = pattern.match(clean)
             if match and field not in values:

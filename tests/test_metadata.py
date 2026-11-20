@@ -35,3 +35,14 @@ def test_unlabeled_metadata_is_not_invented_and_filename_needs_review():
     assert result["recipient"] is None
     assert result["issued_on"] is None
     assert result["provenance"]["title"] == "filename_review"
+
+
+def test_stacked_ocr_labels_and_missing_values():
+    result = extract_metadata(
+        "Course:\nCloud fundamentals\nIssued to\nExample learner\nIssuer:\nIssue date: 2026-11-20",
+        "certificate.jpg",
+    )
+    assert result["title"] == "Cloud fundamentals"
+    assert result["recipient"] == "Example learner"
+    assert result["issuer"] is None
+    assert result["issued_on"] == "2026-11-20"

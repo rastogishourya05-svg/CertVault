@@ -489,7 +489,7 @@ async def certificates(
     params = {
         "owner_id": "eq." + user_id,
         "trashed_at": "not.is.null" if trash else "is.null",
-        "select": "id,title,issuer,category,source,favorite,issued_on,created_at,recipient,reviewed_at",
+        "select": "id,title,issuer,category,source,favorite,issued_on,created_at,recipient,reviewed_at,certificate_files(mime,bytes)",
         "order": "created_at.desc,id.desc",
         "limit": "100",
         "offset": str(offset),

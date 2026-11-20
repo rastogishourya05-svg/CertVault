@@ -56,9 +56,9 @@ export function CertificateVerification({ id }: { id: string }) {
           <p>
             <strong>Authenticity: not verified</strong>
           </p>
-          <p>Extracted course: {evidence.title || "Review PDF"}</p>
-          <p>Recorded issuer: {evidence.issuer || "Review PDF"}</p>
-          <p>Recipient: {evidence.recipient || "Not extracted — review PDF"}</p>
+          <p>Vault title: {evidence.title || "See original document"}</p>
+          <p>Recorded issuer: {evidence.issuer || "See original document"}</p>
+          <p>Recipient: {evidence.recipient || "See original document"}</p>
           <p>Credential ID: {evidence.credential_id || "Not found"}</p>
           <p>{evidence.explanation}</p>
           {evidence.issuer_links.map((link) => (
