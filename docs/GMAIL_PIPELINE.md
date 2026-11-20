@@ -226,3 +226,12 @@ Provider/Storage requests in these tests are explicitly mocked; real ClamAV and 
 Remaining scope: Outlook orchestration, link references/fetching, inline PDFs without attachment IDs, scanned/image OCR, ambiguous-message review/classification and structured metadata are not completed. Detection currently requires a PDF filename and certificate/credential/achievement wording in the subject; it can miss certificates. Filename supplies a review-needed title; issuer/dates are not invented. High-volume history pages over 200 changes require review/backfill improvement. Account signup/reset, full main-dashboard integration, pagination/privacy/deletion/retention and production hardening remain separate release work.
 
 Retries have exponential scheduling and capped attempts, but exhaustive crash/large-file/load testing and provider-specific Retry-After handling remain outstanding. A disconnect/crash between the scanned-object upload and DB commit can leave a private hash-addressed orphan; resuming reuses the same object, but audited orphan-retention cleanup remains to be implemented. Existing files are never silently deleted to compensate. UI notifications are persisted transactionally, not emailed. Production mode still fails closed. Do not represent this milestone as production-ready.
+### Voice search and certificate corrections
+
+From the repository root, run the following in PowerShell. The prompt hides the key and stores it in the private CertVault configuration directory outside the repository. Alternatively set `ELEVENLABS_API_KEY` in the API process environment. Use an ElevenLabs key with Speech to Text access and a usage limit appropriate to the demo.
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.configure-voice
+```
+
+Open the signed-in **My vault** and choose **Dictate search**. For a correction, open **Review extracted details**, choose the title, issuer, recipient or category, and choose **Dictate**. Allow microphone access and stop within 15 seconds, or wait for recording to stop automatically. **Send recording to ElevenLabs** authorizes a provider request that uses the configured account quota. Review and edit the transcript before applying it. Save the review to persist a correction. Cancel before sending to discard the clip locally. Manual inputs remain available. Use localhost or HTTPS in a browser with microphone and AudioWorklet support.

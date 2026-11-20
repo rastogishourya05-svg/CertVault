@@ -196,3 +196,8 @@ Implement typed document handling and isolated image OCR, approved issuer downlo
 - Checked local owner-scoped title groups using aggregate SQL. The three cards in question correspond to three distinct SHA-256 values, two PDFs and one JPEG. No existing files were removed or merged.
 - The signed-in listing now shows format, exact byte count and a same-title review notice. View and download actions have separate spacing. Verification identifies the saved vault title and prompts users to consult the original when fields are missing. New imports recognize stacked OCR labels and "Issued to".
 - Regression evidence: 116 backend tests passed with database and security checks enabled. Both web unit tests, desktop/mobile browser regressions and the separate two-account local smoke passed. The repeated-title case was verified with a synthetic PDF/JPEG pair in both layouts. No new Gmail scan was started.
+
+## Opt-in voice input
+Implement bounded authenticated transcription, editable search and field dictation, then verify provider failures and desktop/mobile workflows using synthetic audio.
+- Implemented signed-in voice search and correction of title, issuer, recipient and category. Local recording requires explicit send and editable transcript approval. Server limits clip length and per-owner requests. Fixed search-refresh editor unmount. No live provider request or charges. Remaining acceptance step is a real utterance with a user-configured ElevenLabs Speech to Text key.
+- Verified 119 backend tests, 2 frontend unit tests, 18 existing browser scenarios, both new desktop/mobile dictation scenarios and 2 separately enabled local-account browser scenarios. Reviewed both viewport screenshots. Lint, TypeScript and the production build passed.

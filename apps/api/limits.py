@@ -19,6 +19,8 @@ class BodyLimitMiddleware:
         path = scope.get("path")
         if path == "/account/certificates/upload":
             limit = STORAGE_HARD_CAP + 65536
+        elif path == "/account/voice/transcribe":
+            limit = 480000
         elif path == "/certificates/upload":
             limit = HARD_CAP + 65536
         else:

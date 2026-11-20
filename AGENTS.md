@@ -37,3 +37,4 @@ A feature is done only when it works end-to-end, has tests, proper authorization
 - Local signed-in dashboard uses owner-authorized account and pipeline routes. Verify account changes with the two-user local smoke in `scripts/check-account-dashboard.py --browser` after reading its fixture and cleanup behavior. Scan summaries are recorded from migration 20261119070000 onward. Keep Gmail scans user-triggered.
 
 - The local signed-in vault accepts PDF/PNG/JPEG. Preserve issuer-file approval, owner isolation and recoverable trash. Run the two-user local smoke for private ZIP export, image round trips and password recovery. External Gmail acceptance is separate from local fixture tests.
+- Voice dictation is opt-in on the signed-in account page. Keep ElevenLabs credentials server-only and use synthetic microphone input and mocked provider responses in automated tests.

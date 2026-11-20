@@ -1,5 +1,6 @@
 "use client";
-import { useEffect, useState } from "react";
+import { Dictation } from "./dictation";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "./ui/button";
 import { api } from "@/lib/api";
 
@@ -23,6 +24,8 @@ export function MetadataReview({
   const [editing, setEditing] = useState(false),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  const [field, setField] = useState("issuer");
   if (!editing)
     return (
       <Button variant="outline" onClick={() => setEditing(true)}>
@@ -31,6 +34,7 @@ export function MetadataReview({
     );
   return (
     <form
+      ref={formRef}
       onSubmit={async (event) => {
         event.preventDefault();
         const form = new FormData(event.currentTarget);
@@ -83,6 +87,28 @@ export function MetadataReview({
           defaultValue={c.category}
         />
       </label>
+      <label>
+        Field to dictate
+        <select value={field} onChange={(e) => setField(e.target.value)}>
+          {["issuer", "title", "recipient", "category"].map((key) => (
+            <option key={key} value={key}>
+              {key}
+            </option>
+          ))}
+        </select>
+      </label>
+      <Dictation
+        key={field}
+        label={field}
+        limit={field === "title" ? 160 : field === "category" ? 80 : 120}
+        apply={(value) => {
+          const input = formRef.current?.elements.namedItem(field);
+          if (input instanceof HTMLInputElement) {
+            input.value = value;
+            input.focus();
+          }
+        }}
+      />
       <p className="muted">
         Check the suggested category and extracted fields against the original
         document.

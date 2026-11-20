@@ -30,6 +30,7 @@ from apps.api.pipeline_routes import router as pipeline_router
 from apps.api.postgres import DatabaseError
 from apps.api.processing import extract_pdf, sample_pdf
 from apps.api.store import data_dir, db, initialize, profile_view, rows
+from apps.api.voice import router as voice_router
 
 
 def uid():
@@ -52,6 +53,7 @@ async def lifespan(app):
 
 app = FastAPI(title="CertVault API", version="0.1.0", lifespan=lifespan)
 app.include_router(account_router)
+app.include_router(voice_router)
 app.include_router(pipeline_router)
 app.add_middleware(BodyLimitMiddleware)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"])

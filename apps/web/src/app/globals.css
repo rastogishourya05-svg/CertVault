@@ -2620,3 +2620,4 @@ fieldset label {
 .account-overview a:focus-visible,.account-rail a:focus-visible {outline:3px solid #63caff;outline-offset:2px;}
 
 .private-file-links { display: flex; flex-wrap: wrap; gap: .5rem 1rem; align-items: center; }
+.dictation { display:flex; align-items:center; flex-wrap:wrap; gap:.5rem; margin:.5rem 0; }

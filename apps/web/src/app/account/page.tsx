@@ -33,6 +33,7 @@ import {
 } from "@/components/vault-management";
 import { AccountOrganization } from "@/components/account-organization";
 import { AccountAutomation } from "@/components/account-automation";
+import { Dictation } from "@/components/dictation";
 import { CertificateVerification } from "@/components/certificate-verification";
 
 type LiveCertificate = {
@@ -486,6 +487,7 @@ export default function DevelopmentAccount() {
                 onChange={(e) => setQuery(e.target.value)}
               />
             </label>
+            <Dictation label="search" limit={200} apply={setQuery} />
             <label className="account-source-filter">
               Filter by source
               <select
@@ -498,7 +500,7 @@ export default function DevelopmentAccount() {
                 <option value="manual">Manual uploads</option>
               </select>
             </label>
-            {loadingVault ? (
+            {loadingVault && certs.length === 0 ? (
               <div className="empty-state" role="status">
                 Loading your private certificates…
               </div>
