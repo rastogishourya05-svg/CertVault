@@ -49,6 +49,19 @@ class PipelineStore:
             self.event(db, "mailbox_connected", key)
             return str(key)
 
+    def update_scan_range(self, key, days):
+        with self.db() as db:
+            row = db.execute(
+                "update private.mailbox_tokens set scan_days=%s "
+                "where connection_id=%s and owner_id=%s and exists "
+                "(select 1 from public.email_connections where id=%s and owner_id=%s and state='connected') "
+                "returning connection_id",
+                (days, key, self.owner, key, self.owner),
+            ).fetchone()
+            if row:
+                self.event(db, "mailbox_scan_range_changed", key)
+            return bool(row)
+
     def event(self, db, action, resource=None):
         db.execute(
             "insert into public.audit_events(owner_id,action,resource_id) values(%s,%s,%s)",

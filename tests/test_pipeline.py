@@ -722,3 +722,27 @@ def test_mail_image_rescan_preserves_single_private_file(pipeline):
     downloads = sum("/attachments/" in r.url.path for r in requests)
     asyncio.run(run(store.enqueue(connection)))
     assert sum("/attachments/" in r.url.path for r in requests) == downloads
+
+
+def test_connected_mailbox_range_is_owner_scoped(pipeline):
+    config, store, connection, other = pipeline
+    assert store.update_scan_range(connection, 1825)
+    assert store.connection(connection)["scan_days"] == 1825
+    assert not PipelineStore(store.dsn, other).update_scan_range(connection, 30)
+    assert store.connection(connection)["scan_days"] == 1825
+
+
+def test_badge_link_needs_review_without_fetch():
+    from apps.api.issuer_files import message_links
+
+    payload = {
+        "mimeType": "text/plain",
+        "body": {
+            "data": base64.urlsafe_b64encode(
+                b"Your AWS certification badge: https://www.credly.com/badges/abcdef123456"
+            ).decode()
+        },
+    }
+    links = message_links(payload, "Your AWS certification badge")
+    assert len(links) == 1
+    assert next(iter(links.values()))[0] == "Issuer link requires manual review"

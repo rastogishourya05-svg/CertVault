@@ -57,10 +57,10 @@ def message_links(payload, subject):
                 filename = path.rsplit("/", 1)[1]
             except ValueError:
                 if not any(
-                    word in subject.lower() for word in ("certificate", "credential", "achievement")
+                    word in subject.lower() for word in ("certificate", "credential", "achievement", "badge", "certification")
                 ) or not any(
                     word in url.lower()
-                    for word in ("verify", "credential", "certificate", "/badges/")
+                    for word in ("verify", "credential", "certificate", "badge", "certification")
                 ):
                     continue
                 filename = "Issuer link requires manual review"

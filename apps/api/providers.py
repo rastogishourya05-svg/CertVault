@@ -231,7 +231,7 @@ class GmailAdapter:
 
     async def messages(self, page_token: str | None = None, days: int = 90) -> dict:
         params = {
-            "q": f"newer_than:{days}d {{filename:pdf filename:png filename:jpg filename:jpeg subject:certificate subject:credential subject:achievement}}",
+            "q": f"newer_than:{days}d {{filename:pdf filename:png filename:jpg filename:jpeg subject:certificate subject:credential subject:achievement subject:badge subject:certification}}",
             "maxResults": 10,
         }
         if page_token:

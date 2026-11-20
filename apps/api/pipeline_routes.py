@@ -257,6 +257,19 @@ async def callback(
     return response
 
 
+class ScanRange(BaseModel):
+    scan_days: int = Field(ge=1, le=3650)
+
+
+@router.put("/connections/{key}/range")
+async def change_scan_range(key: uuid.UUID, body: ScanRange, ctx=Depends(context)):
+    _, store, g, _, _ = ctx
+    await throttle(g, store.owner, "range")
+    if not store.update_scan_range(key, body.scan_days):
+        raise HTTPException(404, "Connected mailbox not found")
+    return {"scan_days": body.scan_days}
+
+
 @router.post("/connections/{key}/scan")
 async def enqueue(key: uuid.UUID, ctx=Depends(context)):
     _, store, g, token, _ = ctx

@@ -229,6 +229,31 @@ export function AccountAutomation({
                         Scan on request · Past {c.scan_days} days
                       </p>
                     </div>
+                    <label>
+                      Scan history
+                      <select
+                        value={c.scan_days}
+                        disabled={busy}
+                        onChange={(event) =>
+                          act(async () => {
+                            await api(
+                              `/account/pipeline/connections/${c.id}/range`,
+                              "PUT",
+                              { scan_days: Number(event.target.value) },
+                            );
+                            setMessage("Scan range saved. Select Scan now to scan the chosen period.");
+                          })
+                        }
+                      >
+                        <option value={7}>Past 7 days</option>
+                        <option value={30}>Past 30 days</option>
+                        <option value={90}>Past 90 days</option>
+                        <option value={365}>Past year</option>
+                        <option value={730}>Past 2 years</option>
+                        <option value={1825}>Past 5 years</option>
+                        <option value={3650}>Past 10 years</option>
+                      </select>
+                    </label>
                     <div className="automation-actions">
                       <Button
                         disabled={
