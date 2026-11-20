@@ -70,7 +70,8 @@ def main():
                 "only_read_only_pdf_mount": len(container["Mounts"]) == 1
                 and container["Mounts"][0]["Destination"] == "/input.pdf"
                 and not container["Mounts"][0]["RW"],
-                "no_secrets_or_host_environment": env_names <= expected_env,
+                "no_secrets_or_host_environment": env_names <= expected_env | {"TESSDATA_PREFIX"}
+                and "TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata" in config["Env"],
             }
         )
         # Exercise restrictions inside the same image with the exact runtime flags.

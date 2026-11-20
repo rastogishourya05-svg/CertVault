@@ -330,6 +330,9 @@ export function AccountAutomation({
                       <option value={30}>Past 30 days</option>
                       <option value={90}>Past 90 days</option>
                       <option value={365}>Past year</option>
+                      <option value={730}>Past 2 years</option>
+                      <option value={1825}>Past 5 years</option>
+                      <option value={3650}>Past 10 years</option>
                     </select>
                   </label>
                   <label className="automation-check">

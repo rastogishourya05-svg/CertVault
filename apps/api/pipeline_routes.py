@@ -89,7 +89,7 @@ async def throttle(g, owner, kind):
 class ConnectMailbox(BaseModel):
     model_config = ConfigDict(extra="forbid")
     consent: bool
-    scan_days: int = Field(default=30, ge=1, le=365)
+    scan_days: int = Field(default=30, ge=1, le=3650)
     automatic: bool = False
 
     @field_validator("automatic")
