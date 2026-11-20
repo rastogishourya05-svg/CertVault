@@ -495,7 +495,9 @@ async def certificates(
         "offset": str(offset),
     }
     if q.strip():
-        params["search_document"] = "wfts(simple)." + q.strip()
+        # Quote the value so punctuation remains inside the PostgREST operand.
+        term = q.strip().replace(chr(92), chr(92) * 2).replace('"', chr(92) + '"')
+        params["or"] = f'(search_document.wfts(simple)."{term}",recipient.wfts(simple)."{term}")'
     return await g.request("GET", "/rest/v1/certificates", token=token, params=params)
 
 

@@ -88,6 +88,7 @@ async def transcribe(request: Request, g: Gateway = Depends(gateway)):
             files={"file": ("dictation.wav", recording.getvalue(), "audio/wav")},
             data={
                 "model_id": "scribe_v2",
+                "language_code": "eng",
                 "tag_audio_events": "false",
                 "timestamps_granularity": "none",
             },

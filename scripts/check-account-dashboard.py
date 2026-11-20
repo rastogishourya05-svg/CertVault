@@ -127,10 +127,18 @@ def check(browser):
             assert first.delete(membership).is_success
             assert first.get(base).json()[0][relation] == []
         assert first.get("/account/pipeline/status").is_success
-        review = {"title": "Reviewed fixture", "issuer": "Example academy", "category": "Training"}
+        review = {
+            "title": "Reviewed fixture",
+            "issuer": "Example academy",
+            "recipient": "Syntheticname",
+            "category": "Training",
+        }
         route = f"/account/certificates/{cert}/review"
         assert other.put(route, json=review).status_code == 404
         assert first.put(route, json=review).is_success
+        assert [row["id"] for row in first.get("/account/certificates?q=Syntheticname").json()] == [
+            str(cert)
+        ]
         change = {"operation": "trash", "ids": [str(cert)]}
         assert other.post("/account/vault/bulk", json=change).json()["updated"] == 0
         assert first.post("/account/vault/bulk", json=change).json()["updated"] == 1

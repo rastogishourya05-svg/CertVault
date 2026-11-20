@@ -58,6 +58,7 @@ def test_transcription_sends_only_validated_audio(service):
         request.url.host == "api.elevenlabs.io" and request.headers["xi-api-key"] == "fixture-key"
     )
     assert b"private-token" not in request.content and b"scribe_v2" in request.content
+    assert b'name="language_code"\r\n\r\neng' in request.content
     with wave.open(
         io.BytesIO(request.content[request.content.index(b"RIFF") :]), "rb"
     ) as recording:

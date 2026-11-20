@@ -307,7 +307,10 @@ def test_profile_and_search_use_authenticated_owner(account):
     assert client.put("/account/profile", json=body).status_code == 200
     assert client.get("/account/profile").json() == body
     assert client.get("/account/certificates?q=cloud").status_code == 200
-    assert requests[-1].url.params["search_document"] == "wfts(simple).cloud"
+    assert (
+        requests[-1].url.params["or"]
+        == '(search_document.wfts(simple)."cloud",recipient.wfts(simple)."cloud")'
+    )
     state["reject_patch"] = True
     assert (
         client.patch(
