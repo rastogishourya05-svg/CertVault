@@ -746,3 +746,41 @@ def test_badge_link_needs_review_without_fetch():
     links = message_links(payload, "Your AWS certification badge")
     assert len(links) == 1
     assert next(iter(links.values()))[0] == "Issuer link requires manual review"
+
+
+def test_public_badge_reference_is_private_and_deduplicated(pipeline):
+    _, store, connection, _ = pipeline
+    badge = str(uuid.uuid4())
+    source = "credly:" + badge
+    first = store.discover(connection, "message1", source, "Credly badge", None, MB)
+    again = store.discover(connection, "message2", source, "Credly badge", None, MB)
+    assert first["status"] == "stored"
+    assert again["status"] == "duplicate"
+    assert first["certificate_id"] == again["certificate_id"]
+
+
+def test_public_badge_links_group_tracking_variants():
+    from apps.api.issuer_files import message_links
+
+    badge = str(uuid.uuid4())
+    url = "https://www.credly.com/badges/" + badge
+    content = f"{url} {url}/public_url?campaign=abc https://example.test/badge-help"
+    payload = {
+        "mimeType": "text/plain",
+        "body": {"data": base64.urlsafe_b64encode(content.encode()).decode()},
+    }
+    assert message_links(payload, "Your badge") == {"credly:" + badge: ("Credly badge", url)}
+
+
+def test_review_group_is_owner_scoped_and_persists(pipeline):
+    _, store, connection, other = pipeline
+    title = "Issuer link requires manual review"
+    a = store.discover(connection, "msg", "link:legacy-a", title, None, MB)
+    store.discover(connection, "msg", "link:manual-review", title, None, MB)
+    assert len([i for i in store.snapshot()["imports"] if i["filename"] == title]) == 1
+    assert not PipelineStore(store.dsn, other).resolve_review(a["id"], False)
+    assert store.resolve_review(a["id"], False)
+    assert (
+        store.discover(connection, "msg", "link:manual-review", title, None, MB)["safe_error"]
+        == "user_reviewed"
+    )

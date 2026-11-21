@@ -282,6 +282,14 @@ async def enqueue(key: uuid.UUID, ctx=Depends(context)):
     return {"job_id": job, "status": "queued"}
 
 
+@router.post("/imports/{key}/review")
+async def resolve_review(key: uuid.UUID, dismissed: bool = False, ctx=Depends(context)):
+    _, store, _, _, _ = ctx
+    if not store.resolve_review(key, dismissed):
+        raise HTTPException(409, "Review unavailable or already resolved")
+    return {"ok": True}
+
+
 @router.post("/imports/{key}/decision")
 async def decision(key: uuid.UUID, body: ImportDecision, ctx=Depends(context)):
     _, store, g, token, _ = ctx

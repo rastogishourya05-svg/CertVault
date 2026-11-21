@@ -37,6 +37,7 @@ import { Dictation } from "@/components/dictation";
 import { CertificateVerification } from "@/components/certificate-verification";
 
 type LiveCertificate = {
+  credly_badge_id?: string | null;
   certificate_files?: { mime: string; bytes: number }[];
   id: string;
   title: string;
@@ -584,12 +585,13 @@ export default function DevelopmentAccount() {
                         />
                         Select
                       </label>
+                      {c.credly_badge_id && <a target="_blank" rel="noreferrer" href={`https://www.credly.com/badges/${encodeURIComponent(c.credly_badge_id)}`}>View on Credly</a>}
                       <MetadataReview certificate={c} saved={refresh} />
                       <CertificateVerification
                         key={[c.id, c.reviewed_at].join("/")}
                         id={c.id}
                       />
-                      <div className="private-file-links">
+                      {(c.certificate_files?.length ?? 0) > 0 && <div className="private-file-links">
                         <a
                           className="text-button"
                           target="_blank"
@@ -604,7 +606,7 @@ export default function DevelopmentAccount() {
                         >
                           Download private file
                         </a>
-                      </div>
+                      </div>}
                       <div className="card-bottom">
                         <span className="tag">{c.category}</span>
                         <span>

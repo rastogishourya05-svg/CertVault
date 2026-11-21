@@ -148,7 +148,10 @@ class PipelineStore:
                     "on r.job_id=j.id and r.owner_id=j.owner_id where j.owner_id=%s order by j.created_at desc limit 20"
                 ),
                 "imports": rows(
-                    "select i.id,i.filename,i.declared_bytes,i.status,i.safe_error,i.approved,i.certificate_id from private.pipeline_items i where i.owner_id=%s "
+                    "select i.id,i.connection_id,i.message_id,i.filename,i.declared_bytes,i.status,i.safe_error,i.approved,i.certificate_id from private.pipeline_items i where i.owner_id=%s "
+                    "and not (i.filename='Issuer link requires manual review' and exists (select 1 from private.pipeline_items older "
+                    "where older.owner_id=i.owner_id and older.connection_id=i.connection_id and older.message_id=i.message_id "
+                    "and older.filename=i.filename and (older.created_at,older.id)<(i.created_at,i.id))) "
                     "and not (i.attachment_id not like 'part:%%' and exists (select 1 from private.pipeline_items n "
                     "where n.owner_id=i.owner_id and n.connection_id=i.connection_id and n.message_id=i.message_id "
                     "and n.filename=i.filename and n.attachment_id like 'part:%%')) order by i.created_at desc limit 100"
@@ -161,6 +164,17 @@ class PipelineStore:
                     "select id,kind,safe_message,read_at from public.notifications where owner_id=%s and read_at is null order by created_at desc limit 20"
                 ),
             }
+
+    def resolve_review(self, key, dismissed):
+        with self.db() as db:
+            return db.execute(
+                "update private.pipeline_items i set status='rejected',safe_error=%s "
+                "from private.pipeline_items ref where ref.id=%s and ref.owner_id=%s "
+                "and i.owner_id=ref.owner_id and i.connection_id=ref.connection_id "
+                "and i.message_id=ref.message_id and i.filename=ref.filename "
+                "and i.filename='Issuer link requires manual review' and i.status='needs_review' returning i.id",
+                ("user_dismissed" if dismissed else "user_reviewed", key, self.owner),
+            ).fetchall()
 
     def decide(self, key, approved):
         with self.db() as db:
@@ -233,6 +247,20 @@ class PipelineStore:
                     safe_error,
                 ),
             ).fetchone()
+            if attachment.startswith("credly:") and not row["certificate_id"]:
+                badge_id = uuid.UUID(attachment.removeprefix("credly:"))
+                certificate = uuid.uuid5(uuid.UUID(self.owner), "credly:" + str(badge_id))
+                url = "https://www.credly.com/badges/" + str(badge_id)
+                inserted = db.execute(
+                    "insert into public.certificates(id,owner_id,title,source,extracted_text,provenance) "
+                    "values(%s,%s,'Credly badge','gmail',%s,%s::jsonb) on conflict(id) do nothing returning id",
+                    (certificate, self.owner, url, json.dumps({"credly_badge_id": str(badge_id)})),
+                ).fetchone()
+                row = db.execute(
+                    "update private.pipeline_items set status=%s,certificate_id=%s,safe_error=null "
+                    "where id=%s and owner_id=%s returning *",
+                    ("stored" if inserted else "duplicate", certificate, row["id"], self.owner),
+                ).fetchone()
             if row["status"] == "awaiting_approval":
                 self.notify(
                     db,

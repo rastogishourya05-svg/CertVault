@@ -34,6 +34,7 @@ def target(url):
 
 def message_links(payload, subject):
     """Keep only source fingerprints; reread the message to resolve approved links."""
+    ambiguous = False
     pending = [payload]
     found = {}
     for _ in range(200):
@@ -56,6 +57,18 @@ def message_links(payload, subject):
                 path = target(url)
                 filename = path.rsplit("/", 1)[1]
             except ValueError:
+                badge = re.fullmatch(
+                    r"https://(?:www\.)?credly\.com/badges/([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})(?:/public_url)?/?(?:[?#][^\s]*)?",
+                    url,
+                    re.I,
+                )
+                if badge:
+                    badge_id = badge[1].lower()
+                    found["credly:" + badge_id] = (
+                        "Credly badge",
+                        "https://www.credly.com/badges/" + badge_id,
+                    )
+                    continue
                 if not any(
                     word in subject.lower()
                     for word in (
@@ -70,11 +83,14 @@ def message_links(payload, subject):
                     for word in ("verify", "credential", "certificate", "badge", "certification")
                 ):
                     continue
-                filename = "Issuer link requires manual review"
+                ambiguous = True
+                continue
             key = "link:" + hashlib.sha256(url.encode()).hexdigest()
             found[key] = (filename, url)
             if len(found) >= 12:
                 break
+    if ambiguous and not found:
+        found["link:manual-review"] = ("Issuer link requires manual review", "")
     return found
 
 

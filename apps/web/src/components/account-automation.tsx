@@ -26,6 +26,8 @@ type Pipeline = {
   }[];
   approvals?: Pipeline["imports"];
   imports: {
+    message_id?: string;
+    connection_id?: string;
     certificate_id?: string;
     id: string;
     filename: string;
@@ -390,7 +392,7 @@ export function AccountAutomation({
                     {j.status === "completed" && !j.summary && (
                       <small> · Outcome counts unavailable for this run</small>
                     )}
-                    {j.stored_files?.map((file) => (
+                    {j.stored_files?.filter(file => file.filename !== "Credly badge").map((file) => (
                       <a
                         className="text-button"
                         key={file.certificate_id}
@@ -416,7 +418,10 @@ export function AccountAutomation({
             <div className="automation-row" key={item.id}>
               <div>
                 <strong>{item.filename}</strong>
-                {item.certificate_id && (
+                {item.filename === "Issuer link requires manual review" && item.message_id && (
+                  <a href={`https://mail.google.com/mail/u/?authuser=${encodeURIComponent(state?.connections.find(c => c.id === item.connection_id)?.account_label ?? "")}#all/${encodeURIComponent(item.message_id)}`} target="_blank" rel="noreferrer">Open source email in Gmail</a>
+                )}
+                {item.certificate_id && item.filename !== "Credly badge" && (
                   <a
                     className="text-button"
                     href={`/api/account/pipeline/certificates/${item.certificate_id}/download?inline=true`}
@@ -427,7 +432,7 @@ export function AccountAutomation({
                   </a>
                 )}
                 <p className="muted">
-                  {item.status.replaceAll("_", " ")} ·{" "}
+                  {item.safe_error === "user_reviewed" ? "Reviewed" : item.safe_error === "user_dismissed" ? "Dismissed" : item.status.replaceAll("_", " ")} ·{" "}
                   {item.declared_bytes === null
                     ? "Unknown size"
                     : formatBytes(item.declared_bytes)}
@@ -436,6 +441,13 @@ export function AccountAutomation({
                     : ""}
                 </p>
               </div>
+              {item.safe_error === "unsupported_issuer_page" && item.status === "needs_review" && (
+                <div className="automation-actions">{[false, true].map(dismiss => (
+                  <Button key={String(dismiss)} disabled={busy} onClick={() => act(async () => {
+                    await api(`/account/pipeline/imports/${item.id}/review?dismissed=${dismiss}`, "POST");
+                  })}>{dismiss ? "Dismiss" : "Mark reviewed"}</Button>
+                ))}</div>
+              )}
               {item.status === "awaiting_approval" && (
                 <div className="automation-actions">
                   {[true, false].map((approve) => (
