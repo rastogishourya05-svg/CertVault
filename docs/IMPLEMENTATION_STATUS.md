@@ -1,5 +1,11 @@
 # Implementation status
 
+## 2026-11-21 · Voice-guided scan review
+
+- Activity explains the latest owner's scan, including approvals, recorded processing failures and missing-certificate troubleshooting. Metadata review accepts multiple dictated field changes before explicit save.
+- Verification covered 137 backend tests plus a separate PostgreSQL scan-ownership regression. Desktop and mobile Playwright passed 20 standard cases plus two real local account cases. The production web build passed.
+- ElevenLabs responses were simulated during automated testing. The stateless Render service has a Blueprint and local fallback. Live microphone transcription and hosted Render acceptance remain outstanding.
+
 ## 2026-11-19 · Signed-in hackathon dashboard
 
 - Completed the planned owner-scoped organization, scan-history, authenticated navigation and vault slices. The real local workspace is `/account`. Overview, My vault, Connected mailboxes, Approval inbox, Activity, Collections & tags and Preferences share one responsive navigation. The synthetic workspace at `/` stays separate.

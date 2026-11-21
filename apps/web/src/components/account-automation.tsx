@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Mail, RefreshCw, ShieldCheck } from "lucide-react";
+import { ScanReview } from "./scan-review";
 import { api } from "@/lib/api";
 import { formatBytes } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -359,6 +360,7 @@ export function AccountAutomation({
           )}
           {section === "activity" && (
             <>
+              {state.jobs[0] && <ScanReview key={state.jobs[0].id} id={state.jobs[0].id} />}
               {state.jobs[0]?.status === "completed" &&
                 state.jobs[0].summary &&
                 Object.keys(state.jobs[0].summary).length === 0 && (

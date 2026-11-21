@@ -3,6 +3,8 @@
 import base64
 import hashlib
 import json
+import os
+import re
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -23,6 +25,7 @@ from apps.api.pipeline_config import load_pipeline
 from apps.api.pipeline_store import PipelineStore
 from apps.api.postgres import DatabaseError
 from apps.api.providers import GmailAdapter, ProviderUnavailable, TokenCipher, exchange_code
+from apps.api.scan_review import Intent, ScanFacts, explain
 
 router = APIRouter(prefix="/account/pipeline", tags=["Authenticated ingestion"])
 
@@ -84,6 +87,10 @@ async def throttle(g, owner, kind):
             raise HTTPException(429, "Too many mailbox requests. Try again in a minute.")
     except RedisError:
         raise HTTPException(503, "Mailbox rate-limit service unavailable") from None
+
+
+class ReviewQuestion(BaseModel):
+    intent: Intent
 
 
 class ConnectMailbox(BaseModel):
@@ -280,6 +287,44 @@ async def enqueue(key: uuid.UUID, ctx=Depends(context)):
         raise HTTPException(404, "Connected mailbox not found") from None
     await dispatch_manual_job(g, store.owner, job, token)
     return {"job_id": job, "status": "queued"}
+
+
+@router.post("/jobs/{key}/explain")
+async def explain_job(key: uuid.UUID, body: ReviewQuestion, ctx=Depends(context)):
+    _, store, gateway_client, _, _ = ctx
+    with store.db() as db:
+        job = db.execute(
+            "select j.status,r.summary, "
+            "exists(select 1 from private.scan_items s join private.pipeline_items i on i.id=s.item_id and i.owner_id=s.owner_id "
+            "where s.job_id=j.id and s.owner_id=j.owner_id and s.outcome='needs_review' and i.safe_error='document_rejected_or_ocr_required') as document_review, "
+            "exists(select 1 from private.scan_items s join private.pipeline_items i on i.id=s.item_id and i.owner_id=s.owner_id "
+            "where s.job_id=j.id and s.owner_id=j.owner_id and s.outcome='rejected' and i.safe_error='storage_size_limit_exceeded') as size_blocked "
+            "from public.sync_jobs j left join private.pipeline_runs r "
+            "on r.job_id=j.id and r.owner_id=j.owner_id where j.id=%s and j.owner_id=%s",
+            (key, store.owner),
+        ).fetchone()
+    if not job:
+        raise HTTPException(404, "Scan unavailable")
+    facts = ScanFacts(
+        intent=body.intent,
+        counts=job["summary"],
+        completed=job["status"] == "completed",
+        document_review=job["document_review"],
+        size_blocked=job["size_blocked"],
+    )
+    endpoint = os.getenv("CERTVAULT_REVIEW_ORIGIN", "")
+    if re.fullmatch(r"https://[a-z0-9-]+\.onrender\.com", endpoint):
+        try:
+            response = await gateway_client.client.post(
+                endpoint + "/explain", json=facts.model_dump(), timeout=8
+            )
+            response.raise_for_status()
+            answer = response.json()["answer"]
+            if isinstance(answer, str) and 0 < len(answer) <= 2000:
+                return {"answer": answer}
+        except (httpx.HTTPError, ValueError, KeyError, TypeError):
+            pass
+    return explain(facts)
 
 
 @router.post("/imports/{key}/review")

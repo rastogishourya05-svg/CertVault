@@ -235,3 +235,10 @@ From the repository root, run the following in PowerShell. The prompt hides the 
 ```
 
 Open the signed-in **My vault** and choose **Dictate search**. For a correction, open **Review extracted details**, choose the title, issuer, recipient or category, and choose **Dictate**. Allow microphone access and stop within 15 seconds, or wait for recording to stop automatically. **Send recording to ElevenLabs** authorizes a provider request that uses the configured account quota. Review and edit the transcript before applying it. Save the review to persist a correction. Cancel before sending to discard the clip locally. Manual inputs remain available. Use localhost or HTTPS in a browser with microphone and AudioWorklet support.
+## Voice-guided scan review
+
+In the signed-in workspace, open Activity and expand **Talk me through my latest scan**. Choose a question or dictate one using the existing ElevenLabs recording consent flow. Read-aloud uses the browser's speech synthesis. Missing-certificate guidance uses the selected scan's recorded outcomes. An unmatched email has no item-level diagnostic.
+
+In My vault, open **Review extracted details**, then **Correct several fields by voice**. Dictate labeled fields, check the proposed edits, and select **Save reviewed details**. Use YYYY-MM-DD for dates.
+
+The local API explains scans directly by default. For an approved Render demo deployment, use the repository Blueprint and set the local FastAPI process's `CERTVAULT_REVIEW_ORIGIN` to the deployed service's HTTPS onrender.com origin before starting it. The endpoint receives a fixed intent, aggregate counts, completion state and two processing flags. It needs no Gmail, Supabase or ElevenLabs credentials. The API uses its local explanation if Render is unavailable.

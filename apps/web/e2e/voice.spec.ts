@@ -60,7 +60,7 @@ test("voice search and corrections use reviewed text and explicit audio consent"
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/account#private-vault");
-  async function dictate(field: string) {
+  async function dictate(field: string, transcript = "Reviewed " + field) {
     await page
       .getByRole("button", { name: "Dictate " + field, exact: true })
       .click();
@@ -75,7 +75,7 @@ test("voice search and corrections use reviewed text and explicit audio consent"
     await expect(send).toBeVisible();
     expect(sent).toBe(before);
     await send.click();
-    await page.getByLabel("Review dictation").fill("Reviewed " + field);
+    await page.getByLabel("Review dictation").fill(transcript);
     await page.getByRole("button", { name: "Use for " + field }).click();
     expect(sent).toBe(before + 1);
   }
@@ -89,6 +89,11 @@ test("voice search and corrections use reviewed text and explicit audio consent"
   await expect(page.getByLabel("Issuer", { exact: true })).toHaveValue(
     "Reviewed issuer",
   );
+  await page.getByText("Correct several fields by voice").click();
+  await dictate("field corrections", "Issuer is Reviewed issuer, recipient is Alex, and issue date is 2025-05-14");
+  await expect(page.getByLabel("Recipient", {exact:true})).toHaveValue("Alex");
+  await expect(page.getByLabel("Issue date", {exact:true})).toHaveValue("2025-05-14");
+  expect(saved).toBe("");
   await page.getByRole("button", { name: "Save reviewed details" }).click();
   await expect.poll(() => saved).toBe("Reviewed issuer");
   configured = false;

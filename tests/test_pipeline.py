@@ -27,6 +27,23 @@ from apps.api.processing import sample_pdf
 from apps.api.providers import TokenCipher, Tokens
 
 
+def test_scan_review_requires_scan_ownership(pipeline, monkeypatch):
+    from fastapi import HTTPException
+
+    from apps.api.pipeline_routes import ReviewQuestion, explain_job
+
+    monkeypatch.delenv("CERTVAULT_REVIEW_ORIGIN", raising=False)
+    _, store, connection, other = pipeline
+    key = uuid.UUID(store.enqueue(connection))
+    question = ReviewQuestion(intent="summary")
+    answer = asyncio.run(explain_job(key, question, (None, store, None, None, None)))
+    assert "has not completed" in answer["answer"]
+    foreign = PipelineStore(store.dsn, other)
+    with pytest.raises(HTTPException) as denied:
+        asyncio.run(explain_job(key, question, (None, foreign, None, None, None)))
+    assert denied.value.status_code == 404
+
+
 @pytest.fixture
 def pipeline():
     dsn = os.getenv("CERTVAULT_TEST_DATABASE_URL")

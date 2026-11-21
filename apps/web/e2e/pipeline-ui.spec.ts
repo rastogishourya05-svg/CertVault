@@ -29,6 +29,7 @@ test("mocked automation activity requires consent and handles per-file approval 
         download_limit_bytes: 45 * 1048576,
       };
     else if (path.endsWith("/certificates")) body = [];
+    else if (path.endsWith("/explain")) body = {answer: "This scan has not completed."};
     else if (path.endsWith("/pipeline/status"))
       body = {
         enabled: true,
@@ -127,6 +128,9 @@ test("mocked automation activity requires consent and handles per-file approval 
   await page.getByRole("button", {name: "Mark reviewed"}).click();
   await expect(page.getByRole("button", {name: "Mark reviewed"})).toHaveCount(0);
   await expect(page.getByRole("link", {name: "View on Credly"})).toHaveAttribute("href", "https://www.credly.com/badges/11111111-1111-4111-8111-111111111111");
+  await page.getByText("Talk me through my latest scan").click();
+  await page.getByRole("button", {name: "Why is a certificate missing?"}).click();
+  await expect(page.getByText("This scan has not completed.")).toBeVisible();
   expect(scans).toBe(1);
   await page.getByRole("link", { name: "Approval inbox", exact: true }).click();
   await page.getByRole("button", { name: "Approve download" }).click();

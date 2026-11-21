@@ -109,6 +109,26 @@ export function MetadataReview({
           }
         }}
       />
+      <details>
+        <summary>Correct several fields by voice</summary>
+        <p>Say Issuer is AWS, recipient is Alex, and issue date is 2025-05-14. Review the proposed values above before saving.</p>
+        <Dictation label="field corrections" limit={600} apply={value => {
+          const matches = Array.from(value.matchAll(/(?:^|[,;.]\s*|\s+and\s+)(?:and\s+)?(?:the\s+)?(issuer|recipient|title|category|issue date)\s+(?:is\s+)?/gi));
+          const edits = [];
+          for (const [i, match] of matches.entries()) {
+            const name = match[1].toLowerCase();
+            const input = formRef.current?.elements.namedItem(name === "issue date" ? "issued_on" : name);
+            const text = value.slice(match.index! + match[0].length, matches[i+1]?.index).trim().replace(/[.,;]+$/, "");
+            if (!(input instanceof HTMLInputElement) || !text || (input.maxLength > 0 && text.length > input.maxLength)) continue;
+            if (name === "issue date") {
+              const date = document.createElement("input"); date.type = "date"; date.value = text;
+              if (!date.value) continue;
+            }
+            input.value = text; edits.push(name);
+          }
+          setError(edits.length ? "Proposed changes: " + edits.join(", ") + ". Check the fields and save." : "No fields recognized. Use the example or edit the fields directly.");
+        }}/>
+      </details>
       <p className="muted">
         Check the suggested category and extracted fields against the original
         document.
