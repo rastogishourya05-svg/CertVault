@@ -8,7 +8,7 @@ import re
 import socket
 import ssl
 import time
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 from apps.api.domain import STORAGE_HARD_CAP, HardLimitExceeded, PolicyError, validate_url
 
@@ -30,6 +30,28 @@ def target(url):
     ):
         raise ValueError("Unsupported issuer link")
     return p.path
+
+
+def credly_badge(url):
+    # Forwarders sometimes put the real destination inside a tracking URL.
+    # Inspect the text locally and rebuild only an exact Credly badge address.
+    try:
+        destinations = [url] + [
+            value
+            for key, value in parse_qsl(urlsplit(url).query, max_num_fields=32)
+            if key.lower() in {"url", "target", "redirect", "destination", "q"}
+        ]
+    except ValueError:
+        destinations = [url]
+    for destination in destinations:
+        badge = re.fullmatch(
+            r"https://(?:www\.)?credly\.com/badges/([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})(?:/public_url)?/?(?:[?#][^\s]*)?",
+            destination,
+            re.I,
+        )
+        if badge:
+            return badge
+    return None
 
 
 def message_links(payload, subject):
@@ -58,11 +80,7 @@ def message_links(payload, subject):
                 path = target(url)
                 filename = path.rsplit("/", 1)[1]
             except ValueError:
-                badge = re.fullmatch(
-                    r"https://(?:www\.)?credly\.com/badges/([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})(?:/public_url)?/?(?:[?#][^\s]*)?",
-                    url,
-                    re.I,
-                )
+                badge = credly_badge(url)
                 if badge:
                     badge_id = badge[1].lower()
                     found["credly:" + badge_id] = (

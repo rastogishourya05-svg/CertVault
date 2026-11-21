@@ -148,7 +148,7 @@ class PipelineStore:
                     "on r.job_id=j.id and r.owner_id=j.owner_id where j.owner_id=%s order by j.created_at desc limit 20"
                 ),
                 "imports": rows(
-                    "select case when i.attachment_id like 'link:credential:%%' then substr(i.attachment_id,17) end as issuer_url,i.id,i.connection_id,i.message_id,i.filename,i.declared_bytes,i.status,i.safe_error,i.approved,i.certificate_id from private.pipeline_items i where i.owner_id=%s "
+                    "select case when i.attachment_id like 'link:credential:%%' then substr(i.attachment_id,17) when i.attachment_id like 'credly:%%' then 'https://www.credly.com/badges/'||substr(i.attachment_id,8) end as issuer_url,i.id,i.connection_id,i.message_id,i.filename,i.declared_bytes,i.status,i.safe_error,i.approved,i.certificate_id from private.pipeline_items i where i.owner_id=%s "
                     "and not (i.filename='Issuer link requires manual review' and i.attachment_id like 'link:%%') "
                     "and not (i.attachment_id like 'link:credential:%%' and exists (select 1 from private.pipeline_items earlier "
                     "where earlier.owner_id=i.owner_id and earlier.attachment_id=i.attachment_id "

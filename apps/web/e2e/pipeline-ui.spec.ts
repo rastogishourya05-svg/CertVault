@@ -54,6 +54,8 @@ test("mocked automation activity requires consent and handles per-file approval 
             ]
           : [],
         imports: [
+          { id: "stored-badge", filename: "Credly badge", status: "stored", declared_bytes: null, safe_error: null,
+            issuer_url: "https://www.credly.com/badges/11111111-1111-4111-8111-111111111111" },
           { id: "badge", filename: "Coursera credential ABCD1234EFGH", issuer_url: "https://www.coursera.org/verify/ABCD1234EFGH", connection_id: "mailbox",
             message_id: "abc", status: reviewed ? "rejected" : "needs_review", declared_bytes: null,
             safe_error: reviewed ? "user_reviewed" : "unsupported_issuer_page" },
@@ -119,6 +121,7 @@ test("mocked automation activity requires consent and handles per-file approval 
   await expect(page.getByRole("link", {name: "Open source email in Gmail"})).toHaveAttribute("href", /#all\/abc$/);
   await page.getByRole("button", {name: "Mark reviewed"}).click();
   await expect(page.getByRole("button", {name: "Mark reviewed"})).toHaveCount(0);
+  await expect(page.getByRole("link", {name: "View on Credly"})).toHaveAttribute("href", "https://www.credly.com/badges/11111111-1111-4111-8111-111111111111");
   expect(scans).toBe(1);
   await page.getByRole("link", { name: "Approval inbox", exact: true }).click();
   await page.getByRole("button", { name: "Approve download" }).click();

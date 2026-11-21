@@ -418,7 +418,10 @@ export function AccountAutomation({
           {(approvals ? pending : mailbox ? [] : state.imports).map((item) => (
             <div className="automation-row" key={item.id}>
               <div>
-                <strong>{item.filename}</strong>
+                <strong>{item.filename}</strong>{" "}
+                {item.filename === "Credly badge" && item.issuer_url && (
+                  <a href={item.issuer_url} target="_blank" rel="noreferrer">View on Credly</a>
+                )}
                 {item.safe_error === "unsupported_issuer_page" && item.issuer_url && (
                   <a href={item.issuer_url} target="_blank" rel="noreferrer">Review on issuer website</a>
                 )}

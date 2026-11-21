@@ -753,6 +753,7 @@ def test_public_badge_reference_is_private_and_deduplicated(pipeline):
     source = "credly:" + badge
     first = store.discover(connection, "message1", source, "Credly badge", None, MB)
     again = store.discover(connection, "message2", source, "Credly badge", None, MB)
+    assert store.snapshot()["imports"][0]["issuer_url"] == "https://www.credly.com/badges/" + badge
     assert first["status"] == "stored"
     assert again["status"] == "duplicate"
     assert first["certificate_id"] == again["certificate_id"]
@@ -804,3 +805,20 @@ def test_only_specific_credential_pages_reach_link_review(pipeline):
     item = store.discover(connection, "msg", key, title, None, MB)
     assert store.snapshot()["imports"][0]["issuer_url"] == url
     assert store.resolve_review(item["id"], False)
+
+
+def test_forwarded_badge_destination():
+    from urllib.parse import quote
+
+    from apps.api.issuer_files import message_links
+
+    badge = str(uuid.uuid4())
+    url = "https://www.credly.com/badges/" + badge
+    wrapped = "https://example.test/click?url=" + quote(url, safe="")
+    payload = {
+        "mimeType": "text/plain",
+        "body": {"data": base64.urlsafe_b64encode(wrapped.encode()).decode()},
+    }
+    assert message_links(payload, "Fwd: Congratulations") == {
+        "credly:" + badge: ("Credly badge", url)
+    }
