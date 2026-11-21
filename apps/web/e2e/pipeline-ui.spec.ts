@@ -15,6 +15,7 @@ test("mocked automation activity requires consent and handles per-file approval 
   let connected = true;
   let status = "awaiting_approval";
   let scans = 0;
+  let invitationDismissed = false;
   let reviewed = false;
   let decision: unknown;
   await page.route("**/api/account/**", async (route) => {
@@ -54,6 +55,7 @@ test("mocked automation activity requires consent and handles per-file approval 
             ]
           : [],
         imports: [
+          {id: "invitation", filename: "Credly badge invitation", message_id: "invite", connection_id: "mailbox", status: invitationDismissed ? "rejected" : "needs_review", safe_error: invitationDismissed ? "user_dismissed" : "unsupported_issuer_page", declared_bytes: null},
           { id: "stored-badge", filename: "Credly badge", status: "stored", declared_bytes: null, safe_error: null,
             issuer_url: "https://www.credly.com/badges/11111111-1111-4111-8111-111111111111" },
           { id: "badge", filename: "Coursera credential ABCD1234EFGH", issuer_url: "https://www.coursera.org/verify/ABCD1234EFGH", connection_id: "mailbox",
@@ -76,6 +78,7 @@ test("mocked automation activity requires consent and handles per-file approval 
         ],
         notifications: [],
       };
+    else if (path.endsWith("/invitation/review")) { invitationDismissed = true; }
     else if (path.endsWith("/badge/review")) { reviewed = true; }
     else if (path.endsWith("/scan")) {
       scans++;
@@ -117,6 +120,8 @@ test("mocked automation activity requires consent and handles per-file approval 
     path: `../../docs/evidence/pipeline-size-limit-${test.info().project.name}.png`,
     fullPage: true,
   });
+  await page.getByRole("button", {name:"Dismiss", exact:true}).first().click();
+  await expect(page.getByText("Open the original email to review this invitation", {exact:false})).toHaveCount(0);
   await expect(page.getByRole("link", {name: "Review on issuer website"})).toHaveAttribute("href", "https://www.coursera.org/verify/ABCD1234EFGH");
   await expect(page.getByRole("link", {name: "Open source email in Gmail"})).toHaveAttribute("href", /#all\/abc$/);
   await page.getByRole("button", {name: "Mark reviewed"}).click();

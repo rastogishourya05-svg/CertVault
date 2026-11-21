@@ -58,6 +58,7 @@ def message_links(payload, subject):
     """Keep only source fingerprints; reread the message to resolve approved links."""
     pending = [payload]
     found = {}
+    invitation = False
     for _ in range(200):
         if not pending or len(found) >= 12:
             break
@@ -72,6 +73,15 @@ def message_links(payload, subject):
             body = html.unescape(base64.urlsafe_b64decode(raw + "==").decode("utf8", "replace"))
         except ValueError:
             continue
+        # Forwarded invitations often contain an opaque acceptance button.
+        visible = re.sub(r"<[^>]{1,2048}>", " ", body)
+        words = " ".join((subject + " " + visible).lower().split())
+        if "credly" in (subject + body).lower() and re.search(
+            r"\b(?:(?:accept|claim|view) (?:your|this) (?:digital )?badge|"
+            r"you(?: have|'ve|\u2019ve) (?:earned|received) (?:a |an |the |your )?[^.!?]{0,80}badge)\b",
+            words,
+        ):
+            invitation = True
         for match in URL.finditer(body):
             if len(found) >= 12:
                 break
@@ -108,6 +118,8 @@ def message_links(payload, subject):
             found[key] = (filename, url)
             if len(found) >= 12:
                 break
+    if invitation and not any(key.startswith("credly:") for key in found):
+        found["link:credly-invitation"] = ("Credly badge invitation", "")
     return found
 
 

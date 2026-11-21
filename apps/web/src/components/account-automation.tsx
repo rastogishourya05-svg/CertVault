@@ -422,6 +422,9 @@ export function AccountAutomation({
                 {item.filename === "Credly badge" && item.issuer_url && (
                   <a href={item.issuer_url} target="_blank" rel="noreferrer">View on Credly</a>
                 )}
+                {item.filename === "Credly badge invitation" && item.status === "needs_review" && (
+                  <p>Open the original email to review this invitation in your Credly account, then mark it reviewed or dismiss it.</p>
+                )}
                 {item.safe_error === "unsupported_issuer_page" && item.issuer_url && (
                   <a href={item.issuer_url} target="_blank" rel="noreferrer">Review on issuer website</a>
                 )}

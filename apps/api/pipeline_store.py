@@ -173,7 +173,7 @@ class PipelineStore:
                 "from private.pipeline_items ref where ref.id=%s and ref.owner_id=%s "
                 "and i.owner_id=ref.owner_id and i.connection_id=ref.connection_id "
                 "and i.message_id=ref.message_id and i.filename=ref.filename "
-                "and (i.attachment_id like 'link:credential:%%' or i.filename='Issuer link requires manual review') and i.status='needs_review' returning i.id",
+                "and (i.attachment_id like 'link:credential:%%' or i.attachment_id='link:credly-invitation' or i.filename='Issuer link requires manual review') and i.status='needs_review' returning i.id",
                 ("user_dismissed" if dismissed else "user_reviewed", key, self.owner),
             ).fetchall()
 
@@ -229,6 +229,7 @@ class PipelineStore:
         if attachment.startswith("link:"):
             unsupported = (
                 attachment.startswith("link:credential:")
+                or attachment == "link:credly-invitation"
                 or filename == "Issuer link requires manual review"
             )
             status = "needs_review" if unsupported else "awaiting_approval"

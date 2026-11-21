@@ -822,3 +822,21 @@ def test_forwarded_badge_destination():
     assert message_links(payload, "Fwd: Congratulations") == {
         "credly:" + badge: ("Credly badge", url)
     }
+
+
+def test_forwarded_private_invitation_is_one_resolvable_task(pipeline):
+    from apps.api.issuer_files import message_links
+
+    _, store, connection, _ = pipeline
+    body = b'<a href="https://example.test/t/opaque">Accept your badge</a> via Credly'
+    payload = {
+        "mimeType": "text/html",
+        "body": {"data": base64.urlsafe_b64encode(body * 3).decode()},
+    }
+    links = message_links(payload, "Fwd: Congratulations")
+    assert list(links) == ["link:credly-invitation"]
+    key, (title, _) = next(iter(links.items()))
+    item = store.discover(connection, "msg", key, title, None, MB)
+    assert item["status"] == "needs_review"
+    assert store.resolve_review(item["id"], True)
+    assert store.discover(connection, "msg", key, title, None, MB)["safe_error"] == "user_dismissed"
