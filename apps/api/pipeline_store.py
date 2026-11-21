@@ -148,10 +148,11 @@ class PipelineStore:
                     "on r.job_id=j.id and r.owner_id=j.owner_id where j.owner_id=%s order by j.created_at desc limit 20"
                 ),
                 "imports": rows(
-                    "select i.id,i.connection_id,i.message_id,i.filename,i.declared_bytes,i.status,i.safe_error,i.approved,i.certificate_id from private.pipeline_items i where i.owner_id=%s "
-                    "and not (i.filename='Issuer link requires manual review' and exists (select 1 from private.pipeline_items older "
-                    "where older.owner_id=i.owner_id and older.connection_id=i.connection_id and older.message_id=i.message_id "
-                    "and older.filename=i.filename and (older.created_at,older.id)<(i.created_at,i.id))) "
+                    "select case when i.attachment_id like 'link:credential:%%' then substr(i.attachment_id,17) end as issuer_url,i.id,i.connection_id,i.message_id,i.filename,i.declared_bytes,i.status,i.safe_error,i.approved,i.certificate_id from private.pipeline_items i where i.owner_id=%s "
+                    "and not (i.filename='Issuer link requires manual review' and i.attachment_id like 'link:%%') "
+                    "and not (i.attachment_id like 'link:credential:%%' and exists (select 1 from private.pipeline_items earlier "
+                    "where earlier.owner_id=i.owner_id and earlier.attachment_id=i.attachment_id "
+                    "and (earlier.created_at,earlier.id)<(i.created_at,i.id))) "
                     "and not (i.attachment_id not like 'part:%%' and exists (select 1 from private.pipeline_items n "
                     "where n.owner_id=i.owner_id and n.connection_id=i.connection_id and n.message_id=i.message_id "
                     "and n.filename=i.filename and n.attachment_id like 'part:%%')) order by i.created_at desc limit 100"
@@ -161,7 +162,7 @@ class PipelineStore:
                     "where owner_id=%s and status='awaiting_approval' order by created_at"
                 ),
                 "notifications": rows(
-                    "select id,kind,safe_message,read_at from public.notifications where owner_id=%s and read_at is null order by created_at desc limit 20"
+                    "select id,kind,safe_message,read_at from public.notifications n where n.owner_id=%s and n.read_at is null and not exists (select 1 from private.pipeline_items i where i.owner_id=n.owner_id and i.filename='Issuer link requires manual review' and i.attachment_id like 'link:%%' and n.event_key='needs_review:'||i.id::text) order by n.created_at desc limit 20"
                 ),
             }
 
@@ -172,7 +173,7 @@ class PipelineStore:
                 "from private.pipeline_items ref where ref.id=%s and ref.owner_id=%s "
                 "and i.owner_id=ref.owner_id and i.connection_id=ref.connection_id "
                 "and i.message_id=ref.message_id and i.filename=ref.filename "
-                "and i.filename='Issuer link requires manual review' and i.status='needs_review' returning i.id",
+                "and (i.attachment_id like 'link:credential:%%' or i.filename='Issuer link requires manual review') and i.status='needs_review' returning i.id",
                 ("user_dismissed" if dismissed else "user_reviewed", key, self.owner),
             ).fetchall()
 
@@ -226,7 +227,10 @@ class PipelineStore:
         status = size_decision(size, threshold, hard_cap=STORAGE_HARD_CAP)
         safe_error = "storage_size_limit_exceeded" if status == "rejected" else None
         if attachment.startswith("link:"):
-            unsupported = filename == "Issuer link requires manual review"
+            unsupported = (
+                attachment.startswith("link:credential:")
+                or filename == "Issuer link requires manual review"
+            )
             status = "needs_review" if unsupported else "awaiting_approval"
             safe_error = (
                 "unsupported_issuer_page" if unsupported else "issuer_link_requires_approval"

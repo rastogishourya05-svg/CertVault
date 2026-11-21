@@ -26,6 +26,7 @@ type Pipeline = {
   }[];
   approvals?: Pipeline["imports"];
   imports: {
+    issuer_url?: string | null;
     message_id?: string;
     connection_id?: string;
     certificate_id?: string;
@@ -193,7 +194,7 @@ export function AccountAutomation({
           <p className="fine-print">
             Import PDF, PNG and JPEG attachments. English OCR reads scanned
             documents. Supported direct Udemy certificate files require download
-            approval. Other issuer pages need manual review.
+            approval. Recognized Coursera and Udemy credential pages can be reviewed in Activity.
           </p>
           <a href="#private-vault">Go to your certificate vault ↓</a>
         </>
@@ -418,7 +419,10 @@ export function AccountAutomation({
             <div className="automation-row" key={item.id}>
               <div>
                 <strong>{item.filename}</strong>
-                {item.filename === "Issuer link requires manual review" && item.message_id && (
+                {item.safe_error === "unsupported_issuer_page" && item.issuer_url && (
+                  <a href={item.issuer_url} target="_blank" rel="noreferrer">Review on issuer website</a>
+                )}
+                {item.safe_error === "unsupported_issuer_page" && item.message_id && (
                   <a href={`https://mail.google.com/mail/u/?authuser=${encodeURIComponent(state?.connections.find(c => c.id === item.connection_id)?.account_label ?? "")}#all/${encodeURIComponent(item.message_id)}`} target="_blank" rel="noreferrer">Open source email in Gmail</a>
                 )}
                 {item.certificate_id && item.filename !== "Credly badge" && (

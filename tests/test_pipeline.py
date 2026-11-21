@@ -744,8 +744,7 @@ def test_badge_link_needs_review_without_fetch():
         },
     }
     links = message_links(payload, "Your AWS certification badge")
-    assert len(links) == 1
-    assert next(iter(links.values()))[0] == "Issuer link requires manual review"
+    assert links == {}
 
 
 def test_public_badge_reference_is_private_and_deduplicated(pipeline):
@@ -777,10 +776,31 @@ def test_review_group_is_owner_scoped_and_persists(pipeline):
     title = "Issuer link requires manual review"
     a = store.discover(connection, "msg", "link:legacy-a", title, None, MB)
     store.discover(connection, "msg", "link:manual-review", title, None, MB)
-    assert len([i for i in store.snapshot()["imports"] if i["filename"] == title]) == 1
+    assert len([i for i in store.snapshot()["imports"] if i["filename"] == title]) == 0
     assert not PipelineStore(store.dsn, other).resolve_review(a["id"], False)
     assert store.resolve_review(a["id"], False)
     assert (
         store.discover(connection, "msg", "link:manual-review", title, None, MB)["safe_error"]
         == "user_reviewed"
     )
+
+
+def test_only_specific_credential_pages_reach_link_review(pipeline):
+    from apps.api.issuer_files import message_links
+
+    _, store, connection, _ = pipeline
+    url = "https://www.coursera.org/verify/ABCD1234EFGH"
+    body = (
+        f"https://example.test/badge-help https://www.coursera.org/verify/ {url}?tracking=1 {url}"
+    )
+    payload = {
+        "mimeType": "text/plain",
+        "body": {"data": base64.urlsafe_b64encode(body.encode()).decode()},
+    }
+    links = message_links(payload, "Your certificate and badge")
+    assert len(links) == 1
+    key, (title, canonical) = next(iter(links.items()))
+    assert canonical == url
+    item = store.discover(connection, "msg", key, title, None, MB)
+    assert store.snapshot()["imports"][0]["issuer_url"] == url
+    assert store.resolve_review(item["id"], False)

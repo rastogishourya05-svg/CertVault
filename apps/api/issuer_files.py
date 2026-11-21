@@ -34,7 +34,6 @@ def target(url):
 
 def message_links(payload, subject):
     """Keep only source fingerprints; reread the message to resolve approved links."""
-    ambiguous = False
     pending = [payload]
     found = {}
     for _ in range(200):
@@ -52,6 +51,8 @@ def message_links(payload, subject):
         except ValueError:
             continue
         for match in URL.finditer(body):
+            if len(found) >= 12:
+                break
             url = match.group().rstrip(".,;:)")
             try:
                 path = target(url)
@@ -69,28 +70,26 @@ def message_links(payload, subject):
                         "https://www.credly.com/badges/" + badge_id,
                     )
                     continue
-                if not any(
-                    word in subject.lower()
-                    for word in (
-                        "certificate",
-                        "credential",
-                        "achievement",
-                        "badge",
-                        "certification",
+                credential = re.fullmatch(
+                    r"https://(?:www\.)?coursera\.org/verify/(?:professional-cert/|specialization/)?([A-Za-z0-9]{10,32})/?(?:[?#][^\s]*)?",
+                    url,
+                )
+                provider = "Coursera"
+                if not credential:
+                    provider = "Udemy"
+                    credential = re.fullmatch(
+                        r"https://www\.udemy\.com/certificate/(UC-[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})/?(?:[?#][^\s]*)?",
+                        url,
                     )
-                ) or not any(
-                    word in url.lower()
-                    for word in ("verify", "credential", "certificate", "badge", "certification")
-                ):
-                    continue
-                ambiguous = True
+                if credential:
+                    canonical = url.split("?", 1)[0].split("#", 1)[0].rstrip("/")
+                    key = "link:credential:" + canonical
+                    found[key] = (provider + " credential " + credential[1], canonical)
                 continue
             key = "link:" + hashlib.sha256(url.encode()).hexdigest()
             found[key] = (filename, url)
             if len(found) >= 12:
                 break
-    if ambiguous and not found:
-        found["link:manual-review"] = ("Issuer link requires manual review", "")
     return found
 
 

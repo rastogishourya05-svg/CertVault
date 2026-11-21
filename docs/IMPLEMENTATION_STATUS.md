@@ -213,3 +213,5 @@ Implement bounded authenticated transcription, editable search and field dictati
 
 ## Credly reference imports and email review
 Recognized Credly badge UUIDs create owner-private link records with View on Credly. Ambiguous issuer links share a review row per message. Reviewed and dismissed actions persist. External issuer metadata retrieval, file acquisition and ownership verification remain open. Synthetic regression: 131 Python tests, 2 web units, 20 browser scenarios plus 2 local Supabase account scenarios passed. New review controls passed separately on desktop and mobile. Production build passed.
+
+Issuer review now requires a recognized Coursera or Udemy credential URL. Activity suppresses historical generic link rows and repeated credential URLs. Credly UUIDs still create private references. Tested with synthetic messages, 132 backend tests, two web units, 20 browser regressions, two local account scenarios and a successful build. Link patterns indicate candidate credentials; external issuer content was not checked.
