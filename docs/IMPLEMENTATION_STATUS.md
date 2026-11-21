@@ -1,5 +1,10 @@
 # Implementation status
 
+## 2026-11-21 · Inline microphone controls
+
+- Search and all five metadata fields have individual microphones. Manual stop and the 15-second limit trigger automatic transcription. Cancel during recording discards the clip. Certificate edits require explicit save.
+- Desktop and mobile Chrome exercised field targeting, cancellation and timeout with synthetic audio and a mocked ElevenLabs response. Standard Playwright regression passed 20 tests with two opt-in live account cases skipped. Lint, TypeScript and two frontend unit tests passed.
+
 ## 2026-11-21 · Voice-guided scan review
 
 - Activity explains the latest owner's scan, including approvals, recorded processing failures and missing-certificate troubleshooting. Metadata review accepts multiple dictated field changes before explicit save.

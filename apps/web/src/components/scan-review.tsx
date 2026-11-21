@@ -61,6 +61,7 @@ export function ScanReview({ id }: { id: string }) {
           </Button>
         ))}
       </div>
+      <small>Stopping sends your recording to ElevenLabs. Recording stops automatically after 15 seconds.</small>
       <Dictation label="scan question" limit={240} apply={dictate} />
       <p role="status">{busy ? "Checking this scan…" : answer}</p>
       {answer && (

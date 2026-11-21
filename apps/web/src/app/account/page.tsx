@@ -477,7 +477,7 @@ export default function DevelopmentAccount() {
                 </>
               )}
             </div>
-            <label className="search-field account-search">
+            <div className="voice-field"><label className="search-field account-search">
               <Search size={18} />
               <input
                 aria-label="Search development certificates"
@@ -488,7 +488,8 @@ export default function DevelopmentAccount() {
                 onChange={(e) => setQuery(e.target.value)}
               />
             </label>
-            <Dictation label="search" limit={200} apply={setQuery} />
+            <Dictation label="search" limit={200} apply={setQuery} compact /></div>
+            <small>Mic recordings are sent to ElevenLabs when stopped or after 15 seconds.</small>
             <label className="account-source-filter">
               Filter by source
               <select

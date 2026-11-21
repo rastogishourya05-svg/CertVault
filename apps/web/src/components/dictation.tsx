@@ -1,30 +1,42 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { Mic, Square } from "lucide-react";
 import { Button } from "./ui/button";
 import { api } from "@/lib/api";
 
-type Phase = "idle" | "starting" | "recording" | "ready" | "sending" | "review";
+type Phase = "idle" | "starting" | "recording" | "sending";
+let activeCancel: (() => void) | null = null;
+
+function takeMicrophone(cancel: () => void) {
+  activeCancel?.();
+  activeCancel = cancel;
+}
+function releaseMicrophone(owner: (() => void) | null) {
+  if (activeCancel === owner) activeCancel = null;
+}
+
 export function Dictation({
   label,
   limit,
+  compact = false,
   apply,
 }: {
   label: string;
   limit: number;
+  compact?: boolean;
   apply: (value: string) => void;
 }) {
   const [phase, setPhase] = useState<Phase>("idle");
-  const [error, setError] = useState(""),
-    [text, setText] = useState("");
+  const [error, setError] = useState("");
   const version = useRef(0),
     cleanup = useRef<() => void>(() => {}),
     finish = useRef<() => void>(() => {});
-  const clip = useRef<Blob | null>(null);
+  const owner = useRef<(() => void) | null>(null);
   useEffect(
     () => () => {
       version.current++;
       cleanup.current();
-      clip.current = null;
+      releaseMicrophone(owner.current);
     },
     [],
   );
@@ -32,12 +44,14 @@ export function Dictation({
     version.current++;
     cleanup.current();
     cleanup.current = () => {};
-    clip.current = null;
+    releaseMicrophone(owner.current);
     setPhase("idle");
-    setText("");
+
     setError("");
   }
   async function record() {
+    takeMicrophone(cancel);
+    owner.current = cancel;
     const run = ++version.current;
     setError("");
     setPhase("starting");
@@ -78,7 +92,7 @@ export function Dictation({
       let count = 0;
       finish.current = () => {
         if (version.current !== run) return;
-        version.current++;
+        finish.current = () => {};
         node.port.onmessage = null;
         stop();
         cleanup.current = () => {};
@@ -87,8 +101,7 @@ export function Dictation({
           setPhase("idle");
           return;
         }
-        clip.current = new Blob(chunks, { type: "application/octet-stream" });
-        setPhase("ready");
+        void send(new Blob(chunks, { type: "application/octet-stream" }), run);
       };
       node.port.onmessage = ({ data }: { data: Int16Array }) => {
         if (version.current !== run) return;
@@ -112,9 +125,7 @@ export function Dictation({
       }
     }
   }
-  async function send() {
-    if (!clip.current) return;
-    const run = ++version.current;
+  async function send(audio: Blob, run: number) {
     const controller = new AbortController();
     cleanup.current = () => controller.abort();
     setPhase("sending");
@@ -126,70 +137,43 @@ export function Dictation({
           "Content-Type": "application/octet-stream",
           "X-CertVault-Voice-Consent": "send-recording",
         },
-        body: clip.current,
+        body: audio,
         signal: controller.signal,
       });
       const result = await response.json();
       if (!response.ok)
         throw Error(result.detail || "Transcription unavailable.");
       if (run !== version.current) return;
-      clip.current = null;
-      setText(result.text);
-      setPhase("review");
+      const value = result.text?.trim();
+      if (!value || value.length > limit) throw Error("Try a shorter recording or type in the field.");
+      apply(value);
     } catch (e) {
-      if (run === version.current) {
+      if (run === version.current)
         setError(e instanceof Error ? e.message : "Transcription unavailable.");
-        setPhase("ready");
+    } finally {
+      if (run === version.current) {
+        cleanup.current = () => {};
+        releaseMicrophone(owner.current);
+        setPhase("idle");
       }
     }
   }
   return (
     <div className="dictation">
       {phase === "idle" && (
-        <Button type="button" variant="outline" onClick={record}>
-          Dictate {label}
+        <Button type="button" variant="outline" aria-label={`Dictate ${label}`} title={`Dictate ${label} using ElevenLabs`} onClick={record}>
+          <Mic size={17} aria-hidden="true" />{!compact && `Dictate ${label}`}
         </Button>
       )}
       {phase === "starting" && <span role="status">Opening microphone…</span>}
       {phase === "recording" && (
-        <>
-          <span role="status">Recording locally · 15 seconds maximum</span>
-          <Button type="button" onClick={() => finish.current()}>
-            Stop recording
-          </Button>
-        </>
-      )}
-      {phase === "ready" && (
-        <Button type="button" onClick={send}>
-          Send recording to ElevenLabs
+        <Button type="button" aria-label="Stop recording" title="Stop and transcribe" onClick={() => finish.current()}>
+          <Square size={16} aria-hidden="true" /> Stop
         </Button>
       )}
       {phase === "sending" && <span role="status">Transcribing…</span>}
-      {phase === "review" && (
-        <>
-          <label>
-            Review dictation
-            <input value={text} onChange={(e) => setText(e.target.value)} />
-          </label>
-          {text.trim().length > limit && (
-            <span>Shorten to {limit} characters.</span>
-          )}
-          <Button
-            type="button"
-            disabled={!text.trim() || text.trim().length > limit}
-            onClick={() => {
-              apply(text.trim());
-              cancel();
-            }}
-          >
-            Use for {label}
-          </Button>
-        </>
-      )}
       {phase !== "idle" && (
-        <Button type="button" variant="outline" onClick={cancel}>
-          Cancel dictation
-        </Button>
+        <Button type="button" variant="outline" onClick={cancel}>Cancel dictation</Button>
       )}
       {error && <p role="alert">{error}</p>}
     </div>

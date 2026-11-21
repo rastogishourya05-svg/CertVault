@@ -234,7 +234,7 @@ From the repository root, run the following in PowerShell. The prompt hides the 
 .\.venv\Scripts\python.exe -m scripts.configure-voice
 ```
 
-Open the signed-in **My vault** and choose **Dictate search**. For a correction, open **Review extracted details**, choose the title, issuer, recipient or category, and choose **Dictate**. Allow microphone access and stop within 15 seconds, or wait for recording to stop automatically. **Send recording to ElevenLabs** authorizes a provider request that uses the configured account quota. Review and edit the transcript before applying it. Save the review to persist a correction. Cancel before sending to discard the clip locally. Manual inputs remain available. Use localhost or HTTPS in a browser with microphone and AudioWorklet support.
+In **My vault**, click the microphone beside search or a metadata field. Starting dictation authorizes sending that clip to ElevenLabs on Stop or at the 15-second limit. Cancel while recording to discard. The transcript fills the selected field and remains editable. Choose **Save reviewed details** to persist metadata. Use localhost or HTTPS and grant microphone permission.
 ## Voice-guided scan review
 
 In the signed-in workspace, open Activity and expand **Talk me through my latest scan**. Choose a question or dictate one using the existing ElevenLabs recording consent flow. Read-aloud uses the browser's speech synthesis. Missing-certificate guidance uses the selected scan's recorded outcomes. An unmatched email has no item-level diagnostic.

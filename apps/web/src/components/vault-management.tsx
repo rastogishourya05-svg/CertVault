@@ -25,7 +25,7 @@ export function MetadataReview({
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
-  const [field, setField] = useState("issuer");
+
   if (!editing)
     return (
       <Button variant="outline" onClick={() => setEditing(true)}>
@@ -58,57 +58,32 @@ export function MetadataReview({
       }}
     >
       <h3>Review extracted details</h3>
-      <label>
-        Title
-        <input name="title" required maxLength={160} defaultValue={c.title} />
-      </label>
-      <label>
-        Issuer
-        <input name="issuer" maxLength={120} defaultValue={c.issuer ?? ""} />
-      </label>
-      <label>
-        Recipient
-        <input
-          name="recipient"
-          maxLength={120}
-          defaultValue={c.recipient ?? ""}
-        />
-      </label>
-      <label>
-        Issue date
-        <input type="date" name="issued_on" defaultValue={c.issued_on ?? ""} />
-      </label>
-      <label>
-        Category
-        <input
-          name="category"
-          required
-          maxLength={80}
-          defaultValue={c.category}
-        />
-      </label>
-      <label>
-        Field to dictate
-        <select value={field} onChange={(e) => setField(e.target.value)}>
-          {["issuer", "title", "recipient", "category"].map((key) => (
-            <option key={key} value={key}>
-              {key}
-            </option>
-          ))}
-        </select>
-      </label>
-      <Dictation
-        key={field}
-        label={field}
-        limit={field === "title" ? 160 : field === "category" ? 80 : 120}
-        apply={(value) => {
-          const input = formRef.current?.elements.namedItem(field);
-          if (input instanceof HTMLInputElement) {
+      <p className="muted">Tap a field’s microphone to dictate. Stopping sends the recording to ElevenLabs automatically, up to 15 seconds. Cancel to discard while recording.</p>
+      {([
+        ["title", "Title", 160], ["issuer", "Issuer", 120],
+        ["recipient", "Recipient", 120], ["issued_on", "Issue date", 80],
+        ["category", "Category", 80],
+      ] as const).map(([name, label, limit]) => (
+        <div className="voice-field" key={name}>
+          <label>{label}
+            <input name={name} type={name === "issued_on" ? "date" : "text"}
+              defaultValue={c[name] ?? ""} maxLength={limit} required={name === "title" || name === "category"} />
+          </label>
+          <Dictation label={label.toLowerCase()} limit={limit} compact apply={value => {
+            const input = formRef.current?.elements.namedItem(name);
+            if (!(input instanceof HTMLInputElement)) return;
+            if (name === "issued_on") {
+              const date = document.createElement("input");
+              date.type = "date";
+              date.value = value.replace(/[.]$/, "");
+              if (!date.value) throw Error("Use YYYY-MM-DD or choose the date in the calendar.");
+              value = date.value;
+            }
             input.value = value;
             input.focus();
-          }
-        }}
-      />
+          }} />
+        </div>
+      ))}
       <details>
         <summary>Correct several fields by voice</summary>
         <p>Say Issuer is AWS, recipient is Alex, and issue date is 2025-05-14. Review the proposed values above before saving.</p>

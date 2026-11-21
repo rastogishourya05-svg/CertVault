@@ -24,7 +24,7 @@ test("voice search and corrections use reviewed text and explicit audio consent"
     source: "manual",
     issued_on: null,
   };
-  let saved = "";
+  let saved = "", nextTranscript = "";
   await page.route("**/api/account/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     let body: unknown = {};
@@ -37,7 +37,7 @@ test("voice search and corrections use reviewed text and explicit audio consent"
       expect(size).toBeGreaterThan(0);
       expect(size).toBeLessThanOrEqual(480000);
       sent++;
-      body = { text: "Synthetic transcription" };
+      body = { text: nextTranscript };
     } else if (path.endsWith("/pipeline/status"))
       body = {
         enabled: false,
@@ -61,6 +61,8 @@ test("voice search and corrections use reviewed text and explicit audio consent"
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/account#private-vault");
   async function dictate(field: string, transcript = "Reviewed " + field) {
+    nextTranscript = transcript;
+    const before = sent;
     await page
       .getByRole("button", { name: "Dictate " + field, exact: true })
       .click();
@@ -68,22 +70,22 @@ test("voice search and corrections use reviewed text and explicit audio consent"
     await expect(stop).toBeVisible();
     await page.waitForTimeout(350);
     await stop.click();
-    const before = sent;
-    const send = page.getByRole("button", {
-      name: "Send recording to ElevenLabs",
-    });
-    await expect(send).toBeVisible();
-    expect(sent).toBe(before);
-    await send.click();
-    await page.getByLabel("Review dictation").fill(transcript);
-    await page.getByRole("button", { name: "Use for " + field }).click();
-    expect(sent).toBe(before + 1);
+    await expect.poll(() => sent).toBe(before + 1);
   }
   await dictate("search");
   await expect(page.getByLabel("Search development certificates")).toHaveValue(
     "Reviewed search",
   );
   await page.getByRole("button", { name: "Review extracted details" }).click();
+  const beforeCancel = sent;
+  await page.getByRole("button", { name: "Dictate title", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Stop recording" })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel dictation" }).click();
+  expect(sent).toBe(beforeCancel);
+  await expect(page.getByLabel("Title", {exact:true})).toHaveValue("Workshop");
+  nextTranscript = "Alex";
+  await page.getByRole("button", { name: "Dictate recipient", exact: true }).click();
+  await expect(page.getByLabel("Recipient", {exact:true})).toHaveValue("Alex", {timeout:22000});
   await dictate("issuer");
   expect(saved).toBe("");
   await expect(page.getByLabel("Issuer", { exact: true })).toHaveValue(
